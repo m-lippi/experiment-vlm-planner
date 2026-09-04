@@ -1,0 +1,34 @@
+# MoveIt 2 controller config for real FR3 via franka_ros2 (ros2_control).
+#
+# moveit_simple_controller_manager communicates with controllers via standard
+# ROS 2 action servers — no bridge required.
+#
+# Action servers provided by franka_ros2:
+#   /fr3_arm_controller/follow_joint_trajectory  (arm — joint_trajectory_controller)
+#   /franka_gripper/gripper_action               (gripper — franka_gripper_node)
+
+moveit_simple_controller_manager:
+  controller_names:
+    - fr3_arm_controller
+    - franka_gripper
+
+  fr3_arm_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+  franka_gripper:
+    type: GripperCommand
+    action_ns: gripper_action
+    default: true
+    joints:
+      - fr3_finger_joint1
+      - fr3_finger_joint2

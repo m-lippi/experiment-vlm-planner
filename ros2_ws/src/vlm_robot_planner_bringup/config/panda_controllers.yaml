@@ -1,0 +1,63 @@
+# ros2_control controller configuration for Franka Panda in Gazebo Classic.
+#
+# Loaded by:
+#   - gazebo_ros2_control plugin (hardware interface)
+#   - controller_manager node spawner (activates controllers)
+#
+# Controllers:
+#   joint_state_broadcaster  — publishes /joint_states
+#   panda_arm_controller     — JointTrajectoryController for the 7-DOF arm
+#                              (MoveIt2 sends goals here)
+#   panda_hand_controller    — GripperActionController for the parallel gripper
+#                              (pick/place primitives send goals here)
+
+controller_manager:
+  ros__parameters:
+    update_rate: 1000  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    panda_arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    panda_hand_controller:
+      type: position_controllers/GripperActionController
+
+
+# ── Arm controller ──────────────────────────────────────────────────────────
+panda_arm_controller:
+  ros__parameters:
+    joints:
+      - panda_joint1
+      - panda_joint2
+      - panda_joint3
+      - panda_joint4
+      - panda_joint5
+      - panda_joint6
+      - panda_joint7
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    state_publish_rate: 100.0      # Hz
+    action_monitor_rate: 20.0      # Hz
+    allow_partial_joints_goal: false
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 5.0
+
+
+# ── Gripper controller ───────────────────────────────────────────────────────
+# Controls panda_finger_joint1 (mirrored to joint2 by the URDF mimic joint).
+# Position 0.0 = closed, 0.04 = fully open (max per-finger travel, 8 cm total gap).
+panda_hand_controller:
+  ros__parameters:
+    joint: panda_finger_joint1
+    action_monitor_rate: 20.0
+    goal_tolerance: 0.005          # m — position tolerance to declare success
+    max_effort: 20.0               # N — max gripping force
+    allow_stalling: false
+    stall_velocity_threshold: 0.001
+    stall_timeout: 2.0

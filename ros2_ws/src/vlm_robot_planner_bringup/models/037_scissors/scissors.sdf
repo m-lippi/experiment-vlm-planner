@@ -1,0 +1,49 @@
+<?xml version='1.0'?>
+<sdf version="1.4">
+  <model name="scissors">
+    <static>false</static>
+    <link name="link">
+      <inertial>       
+        <pose>0.014591521718079741 0.0031621364077388443 0.007400674371156582 1.1124705759062061 -1.5590402390897191 -2.9935291444767933</pose> 
+        <mass>4.680136717925133e-05</mass>
+        <inertia>
+          <ixx>8.694331860937038e-08</ixx>
+          <ixy>9.71159280423797e-25</ixy>
+          <ixz>-8.745245146380917e-24</ixz>
+          <iyy>7.102096251831458e-08</iyy>
+          <iyz>-2.7370854552544547e-24</iyz>
+          <izz>1.693256625130799e-08</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <!-- Use a downsampled mesh for collisions -->
+            <uri>model://037_scissors/google_16k/textured.obj</uri>
+	        </mesh>
+        </geometry>
+        <surface>
+        <!--<friction>
+          <ode>
+            <mu>0.8</mu>
+            <mu2>0.6</mu2>
+          </ode>
+        </friction>-->
+      </surface>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://037_scissors/google_16k/textured.obj</uri>
+	        </mesh>
+        </geometry>
+        <material>
+          <script>
+            <uri>model://037_scissors/scissors.material</uri>
+            <name>scissors</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

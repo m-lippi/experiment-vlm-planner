@@ -1,0 +1,361 @@
+<?xml version="1.0"?>
+<!--
+  panda_arm_inertia.urdf.xacro — Franka Panda complete kinematics WITH inertia.
+
+  Why this file exists:
+    moveit_resources_panda_description/urdf/panda.urdf was generated from ROS Kinetic
+    and contains ZERO <inertial> elements.  Gazebo Classic refuses to simulate
+    revolute / prismatic joints whose child links have no mass, so it silently drops
+    every joint and the ros2_control plugin sees an empty model.
+
+  What we do here:
+    • Same joint origins / axes / limits as the moveit_resources URDF (verified).
+    • <inertial> added to every non-trivial link (rough but non-zero values; sufficient
+      for Phase-1 functional simulation — refine if you need accurate dynamics).
+    • <dynamics damping="0.5"> on every joint for numerical stability.
+    • Mesh filenames use $(find ...) so xacro resolves them to absolute paths before
+      the URDF reaches Gazebo, avoiding package:// URI lookup failures.
+
+  Include from panda_sim.urdf.xacro via:
+    <xacro:include filename="$(find vlm_robot_planner_bringup)/urdf/panda_arm_inertia.urdf.xacro"/>
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="panda">
+
+  <!-- ── Link 0 — base plate ──────────────────────────────────────────────── -->
+  <link name="panda_link0">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link0.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link0.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="-0.041018 -0.00014 0.049974"/>
+      <mass value="0.629769"/>
+      <inertia ixx="3.0e-3" ixy="0" ixz="0"
+               iyy="3.0e-3" iyz="0" izz="2.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Link 1 ────────────────────────────────────────────────────────────── -->
+  <link name="panda_link1">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link1.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link1.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 -0.1"/>
+      <mass value="4.970684"/>
+      <inertia ixx="2.5e-2" ixy="0" ixz="0"
+               iyy="2.5e-2" iyz="0" izz="9.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Joint 1 ───────────────────────────────────────────────────────────── -->
+  <joint name="panda_joint1" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="0 0 0.333" rpy="0 0 0"/>
+    <parent link="panda_link0"/>
+    <child  link="panda_link1"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-2.9671" upper="2.9671" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 2 ────────────────────────────────────────────────────────────── -->
+  <link name="panda_link2">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link2.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link2.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 -0.03 0"/>
+      <mass value="0.646926"/>
+      <inertia ixx="2.0e-3" ixy="0" ixz="0"
+               iyy="1.0e-3" iyz="0" izz="1.5e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Joint 2 ───────────────────────────────────────────────────────────── -->
+  <joint name="panda_joint2" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-1.7628" soft_upper_limit="1.7628"/>
+    <origin xyz="0 0 0" rpy="-1.57079632679 0 0"/>
+    <parent link="panda_link1"/>
+    <child  link="panda_link2"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-1.8326" upper="1.8326" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 3 ────────────────────────────────────────────────────────────── -->
+  <link name="panda_link3">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link3.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link3.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.04 0.04 -0.07"/>
+      <mass value="3.228604"/>
+      <inertia ixx="1.0e-2" ixy="0" ixz="0"
+               iyy="1.0e-2" iyz="0" izz="6.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Joint 3 ───────────────────────────────────────────────────────────── -->
+  <joint name="panda_joint3" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="0 -0.316 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link2"/>
+    <child  link="panda_link3"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-2.9671" upper="2.9671" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 4 ────────────────────────────────────────────────────────────── -->
+  <link name="panda_link4">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link4.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link4.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="-0.05 0.10 0.03"/>
+      <mass value="3.587895"/>
+      <inertia ixx="1.0e-2" ixy="0" ixz="0"
+               iyy="1.0e-2" iyz="0" izz="5.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Joint 4 ───────────────────────────────────────────────────────────── -->
+  <joint name="panda_joint4" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-3.0718" soft_upper_limit="0.0175"/>
+    <origin xyz="0.0825 0 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link3"/>
+    <child  link="panda_link4"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-3.1416" upper="0.0873" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 5 ────────────────────────────────────────────────────────────── -->
+  <link name="panda_link5">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link5.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link5.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="-0.01 0.04 -0.04"/>
+      <mass value="1.225946"/>
+      <inertia ixx="5.0e-3" ixy="0" ixz="0"
+               iyy="5.0e-3" iyz="0" izz="1.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Joint 5 ───────────────────────────────────────────────────────────── -->
+  <joint name="panda_joint5" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="-0.0825 0.384 0" rpy="-1.57079632679 0 0"/>
+    <parent link="panda_link4"/>
+    <child  link="panda_link5"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="12" lower="-2.9671" upper="2.9671" velocity="2.8710"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 6 ────────────────────────────────────────────────────────────── -->
+  <link name="panda_link6">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link6.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link6.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.06 -0.01 -0.01"/>
+      <mass value="1.666555"/>
+      <inertia ixx="3.0e-3" ixy="0" ixz="0"
+               iyy="3.0e-3" iyz="0" izz="2.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Joint 6 ───────────────────────────────────────────────────────────── -->
+  <joint name="panda_joint6" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-0.0175" soft_upper_limit="3.7525"/>
+    <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link5"/>
+    <child  link="panda_link6"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="12" lower="-0.0873" upper="3.8223" velocity="2.8710"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 7 ────────────────────────────────────────────────────────────── -->
+  <link name="panda_link7">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link7.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/link7.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.01 -0.004 0.06"/>
+      <mass value="0.735522"/>
+      <inertia ixx="2.0e-3" ixy="0" ixz="0"
+               iyy="2.0e-3" iyz="0" izz="1.5e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Joint 7 ───────────────────────────────────────────────────────────── -->
+  <joint name="panda_joint7" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="0.088 0 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link6"/>
+    <child  link="panda_link7"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="12" lower="-2.9671" upper="2.9671" velocity="2.8710"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 8 / flange (fixed — no inertia needed, Gazebo welds it) ──────── -->
+  <link name="panda_link8"/>
+
+  <joint name="panda_joint8" type="fixed">
+    <origin xyz="0 0 0.107" rpy="0 0 0"/>
+    <parent link="panda_link7"/>
+    <child  link="panda_link8"/>
+  </joint>
+
+  <!-- ── Hand ─────────────────────────────────────────────────────────────── -->
+  <joint name="panda_hand_joint" type="fixed">
+    <parent link="panda_link8"/>
+    <child  link="panda_hand"/>
+    <origin xyz="0 0 0" rpy="0 0 -0.785398163397"/>
+  </joint>
+
+  <link name="panda_hand">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/hand.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/hand.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0.04"/>
+      <mass value="0.73"/>
+      <inertia ixx="1.0e-3" ixy="0" ixz="0"
+               iyy="1.0e-3" iyz="0" izz="1.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Fingers ───────────────────────────────────────────────────────────── -->
+  <link name="panda_leftfinger">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/finger.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/finger.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.014"/>
+      <inertia ixx="1.0e-4" ixy="0" ixz="0"
+               iyy="1.0e-4" iyz="0" izz="1.0e-4"/>
+    </inertial>
+  </link>
+
+  <link name="panda_rightfinger">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 3.14159265359"/>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/finger.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 3.14159265359"/>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/collision/finger.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.014"/>
+      <inertia ixx="1.0e-4" ixy="0" ixz="0"
+               iyy="1.0e-4" iyz="0" izz="1.0e-4"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_finger_joint1" type="prismatic">
+    <parent link="panda_hand"/>
+    <child  link="panda_leftfinger"/>
+    <origin xyz="0 0 0.0584" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" lower="0.0" upper="0.04" velocity="0.2"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <joint name="panda_finger_joint2" type="prismatic">
+    <parent link="panda_hand"/>
+    <child  link="panda_rightfinger"/>
+    <origin xyz="0 0 0.0584" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit effort="20" lower="0.0" upper="0.04" velocity="0.2"/>
+    <mimic joint="panda_finger_joint1"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+</robot>

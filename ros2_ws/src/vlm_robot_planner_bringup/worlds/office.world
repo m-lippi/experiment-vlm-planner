@@ -1,0 +1,452 @@
+<?xml version="1.0"?>
+<!--
+  Office — ufficio moderno con due tavoli e piedistallo robot.
+  Robot su piedistallo separato dalla scrivania principale.
+  Scrivania principale: oggetti da ufficio graspabili.
+  Secondo tavolo laterale: superficie aggiuntiva per test complessi futuri.
+  Luce soffice e ridotta. Pareti crema 8x6m. 3 pareti (aperto sul fronte).
+-->
+<sdf version="1.6">
+  <world name="office">
+
+    <include><uri>model://sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+
+    <!-- Luce ufficio soffice — intensità bassa, calda -->
+    <light name="office_fill" type="point">
+      <pose>0.5 0.0 2.4 0 0 0</pose>
+      <diffuse>0.38 0.36 0.32 1</diffuse>
+      <specular>0.05 0.05 0.05 1</specular>
+      <attenuation><range>8</range><constant>0.6</constant><linear>0.05</linear><quadratic>0.002</quadratic></attenuation>
+      <cast_shadows>false</cast_shadows>
+    </light>
+
+    <!-- ── Boeing model attachment plugin ──────────────────────────────────
+         Creates/destroys physics joints between model links via ROS2 services:
+           /gazebo/attach  — create fixed joint (replace GazeboAttach teleport)
+           /gazebo/detach  — remove joint
+         Eliminates oscillation caused by gravity vs. kinematic update conflict.
+    ────────────────────────────────────────────────────────────────────── -->
+    <plugin name="model_attachment"
+            filename="libboeing_gazebo_model_attachment_plugin_lib.so">
+    </plugin>
+
+    <!-- ── Gazebo ROS state plugin ──────────────────────────────────────────
+         Exposes /gazebo/get_entity_state service.
+         Used by GazeboOracle to query ground-truth object poses at runtime.
+    ────────────────────────────────────────────────────────────────────── -->
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>10.0</update_rate>
+    </plugin>
+
+    <!-- ── Physics (reduce solver iterations for faster sim) ────────────── -->
+    <physics name="default" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <ode>
+        <solver>
+          <type>quick</type>
+          <iters>50</iters>
+          <sor>1.3</sor>
+        </solver>
+      </ode>
+    </physics>
+
+    <!-- ── Parquet legno chiaro ──────────────────────────────────────────── -->
+    <model name="floor"><static>true</static><pose>0.5 0 0.001 0 0 0</pose>
+      <link name="s"><visual name="v"><geometry><box><size>14 14 0.002</size></box></geometry>
+        <material><ambient>0.72 0.62 0.48 1</ambient><diffuse>0.80 0.70 0.55 1</diffuse></material>
+      </visual></link></model>
+
+    <!-- ── 3 pareti ufficio 8×6m h=2.8m (aperto sul fronte) ─────────────── -->
+    <model name="room"><static>true</static><pose>0.5 0.0 0.0 0 0 0</pose>
+      <!-- parete di fondo divisa da finestra -->
+      <link name="wback_l"><pose>-3.2 -1.5 1.4 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.06 2.2 2.8</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.06 2.2 2.8</size></box></geometry>
+          <material><ambient>0.90 0.90 0.87 1</ambient><diffuse>0.93 0.93 0.90 1</diffuse></material></visual>
+      </link>
+      <link name="wback_r"><pose>-3.2  1.5 1.4 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.06 2.2 2.8</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.06 2.2 2.8</size></box></geometry>
+          <material><ambient>0.90 0.90 0.87 1</ambient><diffuse>0.93 0.93 0.90 1</diffuse></material></visual>
+      </link>
+      <link name="wback_top"><pose>-3.2 0.0 2.50 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.06 6.0 0.60</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.06 6.0 0.60</size></box></geometry>
+          <material><ambient>0.90 0.90 0.87 1</ambient><diffuse>0.93 0.93 0.90 1</diffuse></material></visual>
+      </link>
+      <!-- finestra -->
+      <link name="window"><pose>-3.17 0.0 1.40 0 0 0</pose>
+        <visual name="v"><geometry><box><size>0.02 1.60 1.50</size></box></geometry>
+          <material><ambient>0.55 0.78 0.95 0.30</ambient><diffuse>0.60 0.82 0.98 0.30</diffuse></material></visual>
+      </link>
+      <link name="winbar"><pose>-3.16 0.0 2.15 0 0 0</pose>
+        <visual name="v"><geometry><box><size>0.03 1.70 0.06</size></box></geometry>
+          <material><ambient>0.88 0.88 0.88 1</ambient><diffuse>0.92 0.92 0.92 1</diffuse></material></visual>
+      </link>
+      <!-- pareti laterali -->
+      <link name="wall_left"><pose>-0.2  3.0 1.4 0 0 0</pose>
+        <collision name="c"><geometry><box><size>7.2 0.06 2.8</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>7.2 0.06 2.8</size></box></geometry>
+          <material><ambient>0.88 0.88 0.85 1</ambient><diffuse>0.91 0.91 0.88 1</diffuse></material></visual>
+      </link>
+      <link name="wall_right"><pose>-0.2 -3.0 1.4 0 0 0</pose>
+        <collision name="c"><geometry><box><size>7.2 0.06 2.8</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>7.2 0.06 2.8</size></box></geometry>
+          <material><ambient>0.88 0.88 0.85 1</ambient><diffuse>0.91 0.91 0.88 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Piedistallo robot — colonna metallica grigia 22×22×77cm ────────
+         Il robot è montato su un piedistallo separato dalla scrivania,
+         più vicino alla realtà (robot su stand/tavolo dedicato).
+         panda_link0 rimane a (0.2, 0, 0.77) come da launch file. ────────── -->
+    <model name="robot_pedestal"><static>true</static>
+      <pose>0.2 0.0 0.0 0 0 0</pose>
+      <link name="column">
+        <pose>0 0 0.385 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.22 0.22 0.77</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.22 0.22 0.77</size></box></geometry>
+          <material><ambient>0.30 0.30 0.32 1</ambient><diffuse>0.38 0.38 0.40 1</diffuse>
+          <specular>0.7 0.7 0.7 1</specular></material></visual>
+      </link>
+      <!-- base piedistallo -->
+      <link name="base">
+        <pose>0.07 0 0.025 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.35 0.35 0.05</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.35 0.35 0.05</size></box></geometry>
+          <material><ambient>0.25 0.25 0.27 1</ambient><diffuse>0.32 0.32 0.35 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Scrivania principale — 100×60cm, centro (0.85,0), top z=0.770m ──
+         Centro a x=0.85 → near edge a x=0.35, CLEAR dal piedistallo (x=0.31).
+         Colore noce scuro. ───────────────────────────────────────────────── -->
+    <model name="table"><static>true</static><pose>0.85 0.0 0.0 0 0 0</pose>
+      <link name="top"><pose>0 0 0.755 0 0 0</pose>
+        <collision name="col"><geometry><box><size>1.00 0.60 0.03</size></box></geometry>
+          <surface><friction><ode><mu>0.7</mu><mu2>0.7</mu2></ode></friction></surface></collision>
+        <visual name="vis"><geometry><box><size>1.00 0.60 0.03</size></box></geometry>
+          <material><ambient>0.22 0.15 0.08 1</ambient><diffuse>0.30 0.20 0.12 1</diffuse>
+          <specular>0.12 0.08 0.04 1</specular></material></visual>
+      </link>
+      <link name="leg_fl"><pose> 0.46  0.26 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.18 0.12 0.06 1</ambient><diffuse>0.24 0.16 0.08 1</diffuse></material></visual>
+      </link>
+      <link name="leg_fr"><pose> 0.46 -0.26 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.18 0.12 0.06 1</ambient><diffuse>0.24 0.16 0.08 1</diffuse></material></visual>
+      </link>
+      <link name="leg_bl"><pose>-0.46  0.26 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.18 0.12 0.06 1</ambient><diffuse>0.24 0.16 0.08 1</diffuse></material></visual>
+      </link>
+      <link name="leg_br"><pose>-0.46 -0.26 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.18 0.12 0.06 1</ambient><diffuse>0.24 0.16 0.08 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Tavolo laterale "L" — 55×80cm, PERPENDICOLARE, braccio verso -y ─
+         Forma la "L" connettendosi all'angolo destro della scrivania.
+         Centro: (1.10, -0.70) → x: 0.825-1.375  y: -1.10 a -0.30
+         y=-0.30 combacia con scrivania y=-0.30 → angolo L connesso. ──────── -->
+    <model name="side_table"><static>true</static><pose>1.10 -0.70 0.0 0 0 0</pose>
+      <link name="top"><pose>0 0 0.755 0 0 0</pose>
+        <collision name="col"><geometry><box><size>0.55 0.80 0.03</size></box></geometry>
+          <surface><friction><ode><mu>0.7</mu><mu2>0.7</mu2></ode></friction></surface></collision>
+        <visual name="vis"><geometry><box><size>0.55 0.80 0.03</size></box></geometry>
+          <material><ambient>0.20 0.14 0.07 1</ambient><diffuse>0.28 0.18 0.09 1</diffuse>
+          <specular>0.10 0.07 0.03 1</specular></material></visual>
+      </link>
+      <link name="leg_fl"><pose> 0.245  0.36 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.16 0.11 0.06 1</ambient><diffuse>0.22 0.15 0.08 1</diffuse></material></visual>
+      </link>
+      <link name="leg_fr"><pose> 0.245 -0.36 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.16 0.11 0.06 1</ambient><diffuse>0.22 0.15 0.08 1</diffuse></material></visual>
+      </link>
+      <link name="leg_bl"><pose>-0.245  0.36 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.16 0.11 0.06 1</ambient><diffuse>0.22 0.15 0.08 1</diffuse></material></visual>
+      </link>
+      <link name="leg_br"><pose>-0.245 -0.36 0.37 0 0 0</pose>
+        <collision name="c"><geometry><box><size>0.04 0.04 0.74</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.04 0.04 0.74</size></box></geometry>
+          <material><ambient>0.16 0.11 0.06 1</ambient><diffuse>0.22 0.15 0.08 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Monitor — 3DGEMS monitor_1 (scale=1, empirical test) -->
+    <include>
+      <uri>model://monitor_1</uri>
+      <name>monitor_1</name>
+      <pose>1.220000 0.150000 0.770 0 0 -0.197011</pose>
+    </include>
+
+        <!-- ── Sedia ufficio — 3DGEMS office_chair (scale=1, empirical test) -->
+    <include>
+      <uri>model://office_chair</uri>
+      <name>office_chair</name>
+      <pose>0.35 -1.30 0 0 0 3.94</pose>
+    </include>
+
+        <!-- ── Cestino — in angolo, lontano dalla sedia ───────────────────────── -->
+    <model name="trash_can"><static>true</static>
+      <pose>-1.5 -1.8 0.0 0 0 0</pose>
+      <link name="body"><pose>0 0 0.18 0 0 0</pose>
+        <collision name="c"><geometry><cylinder><radius>0.14</radius><length>0.36</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.14</radius><length>0.36</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.32 1</ambient><diffuse>0.38 0.38 0.40 1</diffuse></material></visual>
+      </link>
+      <link name="rim"><pose>0 0 0.362 0 0 0</pose>
+        <visual name="v"><geometry><cylinder><radius>0.145</radius><length>0.008</length></cylinder></geometry>
+          <material><ambient>0.20 0.20 0.22 1</ambient><diffuse>0.25 0.25 0.28 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Pianta — angolo sinistro lontano ──────────────────────────────── -->
+    <model name="plant"><static>true</static>
+      <pose>-2.2 2.2 0.0 0 0 0</pose>
+      <link name="pot"><pose>0 0 0.22 0 0 0</pose>
+        <collision name="c"><geometry><cylinder><radius>0.16</radius><length>0.44</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.16</radius><length>0.44</length></cylinder></geometry>
+          <material><ambient>0.55 0.28 0.14 1</ambient><diffuse>0.65 0.35 0.18 1</diffuse></material></visual>
+      </link>
+      <link name="stem"><pose>0 0 0.58 0 0 0</pose>
+        <visual name="v"><geometry><cylinder><radius>0.025</radius><length>0.28</length></cylinder></geometry>
+          <material><ambient>0.18 0.38 0.10 1</ambient><diffuse>0.24 0.48 0.14 1</diffuse></material></visual>
+      </link>
+      <link name="leaves_lo"><pose>0 0 0.72 0 0 0</pose>
+        <visual name="v"><geometry><sphere><radius>0.25</radius></sphere></geometry>
+          <material><ambient>0.08 0.30 0.10 1</ambient><diffuse>0.12 0.40 0.14 1</diffuse></material></visual>
+      </link>
+      <link name="leaves_hi"><pose>0.05 0 0.92 0 0 0</pose>
+        <visual name="v"><geometry><sphere><radius>0.18</radius></sphere></geometry>
+          <material><ambient>0.10 0.36 0.12 1</ambient><diffuse>0.14 0.46 0.16 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Libreria a parete sinistra (bookshelf_large 3DGEMS) ──────────────
+         x=-0.3: lontano dalla pianta a (-2.2, 2.2) — gap ~1.9m in x. -->
+    <include>
+      <uri>model://bookshelf_large</uri>
+      <name>bookshelf</name>
+      <pose>-0.3 2.65 0 0 0 0</pose>
+    </include>
+
+    <!-- ── Divano (sofa_set_1) — parete sinistra, schienale contro parete.
+         x=1.8: alla destra della libreria con ~1m di spazio tra loro.
+         y=2.55 → schienale a y≈2.97 (inner surface parete sinistra). -->
+    <include>
+      <uri>model://sofa_set_1</uri>
+      <name>sofa</name>
+      <pose>1.8 2.55 0 0 0 0</pose>
+    </include>
+
+    <!-- ── Tavolino basso (coffee_table_1) davanti al divano ─────────────── -->
+    <include>
+      <uri>model://coffee_table_1</uri>
+      <name>coffee_table</name>
+      <pose>1.8 1.65 0 0 0 0</pose>
+    </include>
+
+    <!-- ── Laptop + keyboard — 3DGEMS (scale=1, empirical test) -->
+    <include>
+      <uri>model://laptop_pc_1</uri>
+      <name>laptop</name>
+      <!-- rotato verso sinistra, su side_table centro -->
+      <pose>1.10 -0.65 0.770 0 0 -1.5708</pose>
+    </include>
+    <include>
+      <uri>model://keyboard</uri>
+      <name>keyboard</name>
+      <pose>0.995898 0.003783 0.770 0 0 -0.166356</pose>
+    </include>
+    <include>
+      <uri>model://mouse</uri>
+      <name>mouse</name>
+      <!-- roll/pitch minimi ignorati (oggetto fisico su piano), yaw conservato -->
+      <pose>1.300000 -0.090000 0.770 0 0 1.401353</pose>
+    </include>
+
+        <!-- ════ OGGETTI SU SCRIVANIA — coerenti con ufficio ════════════════════
+         Tutti distanziati >17cm, x=0.56-0.84 (36-64cm dal robot).
+         plastic_cup (bicchiere caffè), notebook (blocco note), wood_cube
+         (fermacarte), target_tray (vassoio deposito).
+         NO beer (non coerente), NO coke_can (già in workshop).
+    ════════════════════════════════════════════════════════════════════════ -->
+
+    <!-- ── Tazza caffè (plastic_cup) — hybrid: visual DAE + collision primitiva ──
+         model_z=0.770: link a +0.065 → cup bottom esattamente a 0.770 ✓
+         Collision cylinder: h=0.130 centrato a z=0.065 → bottom=0.770 ✓ ──── -->
+    <model name="coffee_cup">
+      <pose>0.600002 0.172969 0.770 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.20</mass>
+          <pose>0 0 0.065 0 0 0</pose>
+          <inertia><ixx>2.0e-4</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>2.0e-4</iyy><iyz>0</iyz><izz>1.2e-4</izz></inertia>
+        </inertial>
+        <!-- Collision: cilindro semplice — bottom a z=0.770 -->
+        <collision name="col">
+          <pose>0 0 0.065 0 0 0</pose>
+          <geometry><cylinder><radius>0.035</radius><length>0.130</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface>
+        </collision>
+        <!-- Visual: mesh DAE realistica plastic_cup (Gazebo DB) -->
+        <visual name="vis">
+          <geometry>
+            <mesh><uri>model://cup_glass/meshes/cup_glass.dae</uri><scale>1 1 1</scale></mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Blocco note — posizione misurata dalla simulazione -->
+    <model name="notebook">
+      <pose>0.62 -0.06 0.783 0 0 0.3</pose>
+      <link name="link">
+        <inertial><mass>0.12</mass>
+          <inertia><ixx>4.6e-5</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>6.8e-5</iyy><iyz>0</iyz><izz>1.1e-4</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><box><size>0.200 0.140 0.020</size></box></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface></collision>
+        <visual name="vis"><geometry><box><size>0.200 0.140 0.020</size></box></geometry>
+          <material><ambient>0.08 0.12 0.35 1</ambient><diffuse>0.10 0.16 0.45 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Fermacarte (wood_cube_5cm) — z=0.795 (sup.tavolo 0.770 + semilato 0.025) -->
+    <include><uri>model://wood_cube_5cm</uri><name>paperweight</name>
+      <pose>0.880000 0.187092 0.795 0 0 0</pose></include>
+
+
+    <!-- ── Penna/pennarello (cilindro sottile) — graspabile, Panda r=8mm<<4cm ✓
+         Standing upright: z=0.770+0.07=0.840 (centro), bottom=0.770. -->
+    <!-- Penna 1 (nera) -->
+    <model name="pen">
+      <pose>0.74 0.27 0.778 0 1.5708 0</pose>
+      <link name="link">
+        <inertial><mass>0.015</mass>
+          <inertia><ixx>2.4e-6</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>2.4e-6</iyy><iyz>0</iyz><izz>4.8e-8</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><cylinder><radius>0.008</radius><length>0.140</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface></collision>
+        <visual name="vis"><geometry><cylinder><radius>0.008</radius><length>0.140</length></cylinder></geometry>
+          <material><ambient>0.05 0.05 0.08 1</ambient><diffuse>0.08 0.08 0.12 1</diffuse>
+          <specular>0.5 0.5 0.5 1</specular></material></visual>
+      </link>
+    </model>
+
+    <!-- Penna 2 (blu) - duplicato per test object identity con labeled images -->
+    <model name="pen2">
+      <pose>0.74 0.42 0.778 0 1.5708 0</pose>
+      <link name="link">
+        <inertial><mass>0.015</mass>
+          <inertia><ixx>2.4e-6</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>2.4e-6</iyy><iyz>0</iyz><izz>4.8e-8</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><cylinder><radius>0.008</radius><length>0.140</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface></collision>
+        <visual name="vis"><geometry><cylinder><radius>0.008</radius><length>0.140</length></cylinder></geometry>
+          <material><ambient>0.08 0.20 0.75 1</ambient><diffuse>0.10 0.28 0.90 1</diffuse>
+          <specular>0.5 0.5 0.5 1</specular></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Gomma (box piatto bianco) — 6×2.5×1.5cm, graspabile ─────────────
+         Centre z = 0.770+0.0075=0.7775 -->
+    <model name="eraser">
+      <pose>0.62 -0.14 0.7775 0 0 0</pose>
+      <link name="link">
+        <inertial><mass>0.025</mass>
+          <inertia><ixx>1.4e-6</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>7.8e-6</iyy><iyz>0</iyz><izz>8.8e-6</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><box><size>0.060 0.025 0.015</size></box></geometry>
+          <surface><friction><ode><mu>0.7</mu><mu2>0.7</mu2></ode></friction></surface></collision>
+        <visual name="vis"><geometry><box><size>0.060 0.025 0.015</size></box></geometry>
+          <material><ambient>0.92 0.92 0.90 1</ambient><diffuse>0.96 0.96 0.94 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Target vassoio deposito (static, verde) -->
+    <model name="shelf_b"><static>true</static>
+      <pose>1.05 -0.28 0.78 0 0 0</pose>
+      <link name="surface">
+        <collision name="col"><geometry><box><size>0.15 0.15 0.02</size></box></geometry>
+          <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface></collision>
+        <visual name="vis"><geometry><box><size>0.15 0.15 0.02</size></box></geometry>
+          <material><ambient>0.20 0.65 0.20 1</ambient><diffuse>0.20 0.65 0.20 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ── Overview camera: fixed, 3/4 frontal-lateral view of the table ──────
+         Position: world (1.0, 0.7, 1.5) — to the right of and slightly past
+         the table's far edge, elevated.
+         Orientation: rpy = (0, 0.68, -2.19) — looks toward table centre
+         (0.5, 0, 0.8).  Optical-axis formula: (cos(yaw)*cos(pitch),
+         sin(yaw)*cos(pitch), -sin(pitch)) → (-0.45, -0.63, -0.63) ✓
+
+         Why this position vs straight-down:
+           - Objects in foreground (x≈0.5), arm base in background (x≈0.2)
+             → arm never occludes objects regardless of joint config.
+           - y=0.7 offset puts arm (y≈0) to the left of frame centre,
+             objects (y=-0.25…+0.10) in right-centre → spatially separated.
+           - 3/4 perspective gives VLM better depth/layout understanding
+             than pure top-down view.
+
+         Phase 2+: replace with eye-in-hand RealSense D435i after look_at().
+         Topic: /overview_camera/image_raw  (640×480, 10 Hz)
+    ──────────────────────────────────────────────────────────────────────── -->
+    <model name="overview_camera">
+      <static>true</static>
+      <!-- stessa posizione, ruotata verso X+ (yaw 30°, target bordo dx scrivania) -->
+      <pose>-0.20 -1.00 2.10 0 0.690 0.519</pose>
+      <link name="camera_link">
+        <visual name="vis">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+          <material><ambient>0 0 0.8 1</ambient><diffuse>0 0 0.8 1</diffuse></material>
+        </visual>
+        <sensor name="overview_camera" type="camera">
+          <update_rate>10</update_rate>
+          <camera>
+            <horizontal_fov>1.047</horizontal_fov>
+            <image>
+              <width>1280</width>
+              <height>960</height>
+              <format>R8G8B8</format>
+            </image>
+            <clip><near>0.05</near><far>5.0</far></clip>
+          </camera>
+          <plugin name="overview_camera_plugin" filename="libgazebo_ros_camera.so">
+            <ros>
+              <remapping>~/image_raw:=/overview_camera/image_raw</remapping>
+              <remapping>~/camera_info:=/overview_camera/camera_info</remapping>
+            </ros>
+            <camera_name>overview_camera</camera_name>
+            <frame_name>overview_camera_link</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="paint_can_demo">
+    <physics type="ode"><max_step_size>0.001</max_step_size><real_time_update_rate>1000</real_time_update_rate><gravity>0 0 -9.81</gravity></physics>
+    <scene><ambient>0.55 0.55 0.57 1</ambient><background>0.12 0.12 0.14 1</background><shadows>false</shadows></scene>
+    <model name="ground"><static>true</static><link name="link"><collision name="c"><geometry><box><size>4 4 0.05</size></box></geometry><pose>0 0 -0.025 0 0 0</pose></collision><visual name="v"><geometry><box><size>4 4 0.05</size></box></geometry><pose>0 0 -0.025 0 0 0</pose><material><ambient>0.18 0.18 0.20 1</ambient><diffuse>0.28 0.29 0.31 1</diffuse><specular>0.04 0.04 0.04 1</specular></material></visual></link></model>
+    <model name="bench"><static>true</static><link name="link"><collision name="c"><pose>0 0 0.75 0 0 0</pose><geometry><box><size>1.6 0.8 0.08</size></box></geometry></collision><visual name="v"><pose>0 0 0.75 0 0 0</pose><geometry><box><size>1.6 0.8 0.08</size></box></geometry><material><ambient>0.32 0.19 0.08 1</ambient><diffuse>0.72 0.50 0.25 1</diffuse><specular>0.05 0.05 0.05 1</specular></material></visual></link></model>
+    <include><uri>model://paint_can</uri><name>paint_can</name><pose>0 0 0.80 0 0 0</pose></include>
+    <gui fullscreen="0"><camera name="user_camera"><pose>1.7 1.5 1.4 0 0.35 -2.35</pose><view_controller>orbit</view_controller></camera></gui>
+  </world>
+</sdf>

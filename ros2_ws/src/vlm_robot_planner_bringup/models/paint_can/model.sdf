@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="paint_can">
+    <static>false</static>
+    <self_collide>false</self_collide>
+    <link name="link">
+      <inertial>
+        <pose>0 0 0.095 0 0 0</pose>
+        <mass>1.5</mass>
+        <inertia>
+          <ixx>0.00655</ixx><iyy>0.00655</iyy><izz>0.00510</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+
+      <visual name="body"><geometry><mesh><uri>model://paint_can/meshes/body.stl</uri></mesh></geometry><material><ambient>0.18 0.19 0.20 1</ambient><diffuse>0.48 0.50 0.53 1</diffuse><specular>0.95 0.95 0.95 1</specular></material></visual>
+      <visual name="upper_collar"><geometry><mesh><uri>model://paint_can/meshes/upper_collar.stl</uri></mesh></geometry><material><ambient>0.20 0.21 0.22 1</ambient><diffuse>0.56 0.58 0.61 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="bottom_rim"><geometry><mesh><uri>model://paint_can/meshes/bottom_rim.stl</uri></mesh></geometry><material><ambient>0.20 0.21 0.22 1</ambient><diffuse>0.62 0.64 0.67 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="top_rim"><geometry><mesh><uri>model://paint_can/meshes/top_rim.stl</uri></mesh></geometry><material><ambient>0.20 0.21 0.22 1</ambient><diffuse>0.62 0.64 0.67 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="lid"><geometry><mesh><uri>model://paint_can/meshes/lid.stl</uri></mesh></geometry><material><ambient>0.20 0.21 0.22 1</ambient><diffuse>0.60 0.62 0.65 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="lid_rings"><geometry><mesh><uri>model://paint_can/meshes/lid_rings.stl</uri></mesh></geometry><material><ambient>0.24 0.25 0.26 1</ambient><diffuse>0.72 0.74 0.76 1</diffuse><specular>1 1 1 1</specular></material></visual>
+
+      <visual name="label_band"><geometry><mesh><uri>model://paint_can/meshes/label_band.stl</uri></mesh></geometry><material><ambient>0.025 0.075 0.12 1</ambient><diffuse>0.045 0.18 0.32 1</diffuse><specular>0.12 0.12 0.12 1</specular></material></visual>
+      <visual name="label_edges"><geometry><mesh><uri>model://paint_can/meshes/label_edges.stl</uri></mesh></geometry><material><ambient>0.20 0.21 0.22 1</ambient><diffuse>0.62 0.64 0.67 1</diffuse><specular>0.8 0.8 0.8 1</specular></material></visual>
+      <visual name="front_label"><geometry><mesh><uri>model://paint_can/meshes/front_label.stl</uri></mesh></geometry><material><ambient>0.72 0.72 0.68 1</ambient><diffuse>0.92 0.92 0.86 1</diffuse><specular>0.05 0.05 0.05 1</specular></material></visual>
+      <visual name="paint_swatch"><geometry><mesh><uri>model://paint_can/meshes/paint_swatch.stl</uri></mesh></geometry><material><ambient>0.45 0.08 0.03 1</ambient><diffuse>0.85 0.18 0.05 1</diffuse><specular>0.08 0.08 0.08 1</specular></material></visual>
+
+      <visual name="handle_lugs"><geometry><mesh><uri>model://paint_can/meshes/handle_lugs.stl</uri></mesh></geometry><material><ambient>0.18 0.19 0.20 1</ambient><diffuse>0.55 0.57 0.60 1</diffuse><specular>0.9 0.9 0.9 1</specular></material></visual>
+      <visual name="wire_handle"><geometry><mesh><uri>model://paint_can/meshes/wire_handle.stl</uri></mesh></geometry><material><ambient>0.16 0.17 0.18 1</ambient><diffuse>0.52 0.54 0.56 1</diffuse><specular>0.95 0.95 0.95 1</specular></material></visual>
+      <visual name="handle_grip"><geometry><mesh><uri>model://paint_can/meshes/handle_grip.stl</uri></mesh></geometry><material><ambient>0.025 0.025 0.028 1</ambient><diffuse>0.06 0.06 0.07 1</diffuse><specular>0.18 0.18 0.18 1</specular></material></visual>
+      <visual name="side_seam"><geometry><mesh><uri>model://paint_can/meshes/side_seam.stl</uri></mesh></geometry><material><ambient>0.16 0.17 0.18 1</ambient><diffuse>0.40 0.42 0.44 1</diffuse><specular>0.75 0.75 0.75 1</specular></material></visual>
+
+      <!-- Simplified physics: stable cylinder rather than detailed mesh collision. -->
+      <collision name="can_collision">
+        <pose>0 0 0.096 0 0 0</pose>
+        <geometry><cylinder><radius>0.0835</radius><length>0.192</length></cylinder></geometry>
+        <surface>
+          <friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction>
+          <contact><ode><kp>100000</kp><kd>10</kd><max_vel>0.05</max_vel><min_depth>0.001</min_depth></ode></contact>
+        </surface>
+      </collision>
+
+      <velocity_decay><linear>0.03</linear><angular>0.08</angular></velocity_decay>
+    </link>
+  </model>
+</sdf>

@@ -1,0 +1,37 @@
+# Kinematics solver configuration for the Panda arm.
+#
+# Uses pick_ik (PickNik's recommended solver for MoveIt2 on ROS2 Humble)
+# instead of the KDL default.
+#
+# Why: KDL selects IK solutions based on numerical convergence without
+# penalizing joint-space distance from the previous waypoint. This causes
+# joint-space "jumps" (shoulder/elbow/wrist flips) when compute_cartesian_path
+# plans paths with non-standard EEF orientations (e.g. tilted side grasp).
+#
+# pick_ik mode=local uses gradient descent starting from the seed (previous
+# joint state), so consecutive Cartesian waypoints naturally get nearby IK
+# solutions — equivalent to Trac-IK Distance mode.
+#
+# References:
+#   - pick_ik: moveit.picknik.ai/main/doc/how_to_guides/pick_ik/pick_ik_tutorial.html
+#   - ros-humble-pick-ik available in Humble apt repo (trac_ik is source-only)
+
+panda_arm:
+  kinematics_solver: pick_ik/PickIkPlugin
+  kinematics_solver_timeout: 0.05
+  kinematics_solver_attempts: 3
+  # local: gradient descent from current joint state → stays close to seed.
+  # Prevents IK jumps in Cartesian interpolation for non-standard orientations.
+  mode: local
+  position_threshold: 0.001
+  orientation_threshold: 0.01
+  cost_threshold: 0.001
+  stop_optimization_on_valid_solution: true
+  approximate_solution_position_threshold: 0.005
+  approximate_solution_orientation_threshold: 0.05
+
+panda_hand:
+  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+  kinematics_solver_search_resolution: 0.005
+  kinematics_solver_timeout: 0.05
+  kinematics_solver_attempts: 3

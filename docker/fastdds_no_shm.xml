@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  fastdds_no_shm.xml — Disabilita la Shared Memory transport di FastDDS.
+
+  Problema: FastDDS usa SHM come trasporto preferenziale fra processi sullo
+  stesso host. Con Docker (anche con ipc: host), le versioni Foxy (2.1.x) e
+  Humble (2.6.x) hanno formati SHM incompatibili → il bridge non vede i topic
+  del container ros2 e viceversa.
+
+  Fix: forziamo UDP come unico trasporto, che funziona correttamente attraverso
+  i container in modalità network_mode: host.
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>UDPv4Transport</transport_id>
+            <type>UDPv4</type>
+        </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="default_participant_profile" is_default_profile="true">
+        <rtps>
+            <userTransports>
+                <transport_id>UDPv4Transport</transport_id>
+            </userTransports>
+            <useBuiltinTransports>false</useBuiltinTransports>
+        </rtps>
+    </participant>
+</profiles>

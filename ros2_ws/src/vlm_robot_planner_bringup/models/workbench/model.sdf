@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<sdf version="1.6"><model name="workbench"><static>true</static><link name="link">
+<visual name="wood_top"><geometry><mesh><uri>model://workbench/meshes/top_light_wood.stl</uri></mesh></geometry><material>
+<!-- <ambient>0.760 0.520 0.270 1</ambient><diffuse>0.760 0.520 0.270 1</diffuse><specular>0.10 0.10 0.10 1</specular> -->
+
+    <ambient>0.25 0.15 0.07 1</ambient>
+    <diffuse>0.52 0.32 0.14 1</diffuse>
+    <specular>0.03 0.03 0.03 1</specular>
+</material></visual>
+<visual name="steel_frame"><geometry><mesh><uri>model://workbench/meshes/steel_frame.stl</uri></mesh></geometry><material><ambient>0.250 0.290 0.320 1</ambient><diffuse>0.250 0.290 0.320 1</diffuse><specular>0.10 0.10 0.10 1</specular></material></visual>
+<visual name="lower_shelf"><geometry><mesh><uri>model://workbench/meshes/lower_shelf.stl</uri></mesh></geometry><material><ambient>0.380 0.250 0.140 1</ambient><diffuse>0.380 0.250 0.140 1</diffuse><specular>0.10 0.10 0.10 1</specular></material></visual>
+<collision name="top_collision"><pose>0 0 0.82 0 0 0</pose><geometry><box><size>2.4 1.0 0.10</size></box></geometry></collision>
+<collision name="leg1_collision"><pose>-1.02 -0.39 0.39 0 0 0</pose><geometry><box><size>0.075 0.075 0.78</size></box></geometry></collision>
+<collision name="leg2_collision"><pose>1.02 -0.39 0.39 0 0 0</pose><geometry><box><size>0.075 0.075 0.78</size></box></geometry></collision>
+<collision name="leg3_collision"><pose>-1.02 0.39 0.39 0 0 0</pose><geometry><box><size>0.075 0.075 0.78</size></box></geometry></collision>
+<collision name="leg4_collision"><pose>1.02 0.39 0.39 0 0 0 0</pose><geometry><box><size>0.075 0.075 0.78</size></box></geometry></collision>
+<collision name="lower_shelf_collision"><pose>0 0 0.25 0 0 0</pose><geometry><box><size>2.03 0.76 0.055</size></box></geometry></collision>
+</link></model></sdf>

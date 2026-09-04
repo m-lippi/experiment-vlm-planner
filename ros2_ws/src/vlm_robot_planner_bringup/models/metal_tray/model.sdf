@@ -1,0 +1,11 @@
+<?xml version="1.0"?><sdf version="1.6"><model name="metal_tray"><static>false</static>
+<link name="link"><visual name="tray">
+  <geometry><mesh><uri>model://metal_tray/meshes/metal_tray.stl</uri></mesh></geometry>
+  <!-- <material><ambient>0.52 0.54 0.56 1</ambient><diffuse>0.52 0.54 0.56 1</diffuse>
+  <specular>0.08 0.08 0.08 1</specular></material> -->
+  <material>
+  <ambient>0.18 0.19 0.20 1</ambient>
+  <diffuse>0.60 0.62 0.65 1</diffuse>
+  <specular>1.0 1.0 1.0 1</specular>
+</material>
+</visual><inertial><mass>0.9</mass><inertia><ixx>0.01308</ixx><iyy>0.023768</iyy><izz>0.034688</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="bottom"><pose>0 0 0.009 0 0 0</pose><geometry><box><size>0.50 0.35 0.018</size></box></geometry></collision></link></model></sdf>

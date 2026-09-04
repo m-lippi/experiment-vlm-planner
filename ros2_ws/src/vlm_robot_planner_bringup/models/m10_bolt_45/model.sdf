@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="m10_bolt_45">
+    <static>false</static>
+    <link name="link">
+      <inertial>
+        <pose>1.04783003e-11 1.63526165e-12 0.0332027193 0 0 0</pose>
+        <mass>0.0320162649</mass>
+        <inertia>
+          <ixx>8.7585218e-06</ixx><ixy>-1.60172283e-15</ixy><ixz>7.23979086e-15</ixz>
+          <iyy>8.7585216e-06</iyy><iyz>-1.47963772e-10</iyz><izz>6.84316726e-07</izz>
+        </inertia>
+      </inertial>
+      <visual name="threaded_visual">
+        <geometry><mesh><uri>model://m10_bolt_45/meshes/m10_bolt_45.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+        <material>
+          <ambient>0.42 0.43 0.45 1</ambient>
+          <diffuse>0.68 0.70 0.73 1</diffuse>
+          <specular>0.85 0.85 0.85 1</specular>
+        </material>
+      </visual>
+      <collision name="shaft_collision">
+        <pose>0 0 0.022500 0 0 0</pose>
+        <geometry><cylinder><radius>0.004600</radius><length>0.045000</length></cylinder></geometry>
+        <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface>
+      </collision>
+      <collision name="head_collision">
+        <pose>0 0 0.048425 0 0 0</pose>
+        <geometry><cylinder><radius>0.009815</radius><length>0.006850</length></cylinder></geometry>
+        <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface>
+      </collision>
+      <velocity_decay><linear>0.03</linear><angular>0.05</angular></velocity_decay>
+    </link>
+  </model>
+</sdf>

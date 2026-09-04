@@ -1,0 +1,49 @@
+<?xml version='1.0'?>
+<sdf version="1.4">
+  <model name="power_drill">
+    <static>false</static>
+    <link name="link">
+      <inertial>       
+        <pose>-0.0307146912553375 0.02435084573028549 0.023567633989684204 -2.086149117989623 -1.5309771458518981 0.6822464871470122</pose> 
+        <mass>0.0005808968085666662</mass>
+        <inertia>
+          <ixx>3.1058012590273486e-06</ixx>
+          <ixy>1.059700243913121e-23</ixy>
+          <ixz>-6.313824270936247e-22</ixz>
+          <iyy>2.3564289011284853e-06</iyy>
+          <iyz>-4.569375167873063e-23</iyz>
+          <izz>9.038816388046965e-07</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <!-- Use a downsampled mesh for collisions -->
+            <uri>model://035_power_drill/google_16k/textured.obj</uri>
+	        </mesh>
+        </geometry>
+        <surface>
+        <!--<friction>
+          <ode>
+            <mu>0.8</mu>
+            <mu2>0.6</mu2>
+          </ode>
+        </friction>-->
+      </surface>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://035_power_drill/google_16k/textured.obj</uri>
+	        </mesh>
+        </geometry>
+        <material>
+          <script>
+            <uri>model://035_power_drill/power_drill.material</uri>
+            <name>power_drill</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

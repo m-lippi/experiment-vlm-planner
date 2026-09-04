@@ -1,0 +1,534 @@
+<?xml version="1.0"?>
+<!--
+  panda_sim.urdf.xacro — Panda per Gazebo Classic 11
+  ─────────────────────────────────────────────────────────────────────────────
+  Inlines the full Franka Panda kinematic chain WITH <inertial> elements.
+  The upstream moveit_resources panda.urdf (generated from ROS Kinetic) has
+  zero inertia, so Gazebo Classic silently drops every joint — fixed here.
+
+  Visual mesh paths use $(find ...) → xacro resolves to absolute paths for
+  Gazebo's renderer.  Collision mesh paths use package:// for MoveIt2.
+
+  Adds:
+    - gazebo_ros2_control plugin (libgazebo_ros2_control.so)
+    - Wrist camera (Intel RealSense D435i approx., eye-in-hand)
+      topic: /camera/color/image_raw
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="panda">
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       FRANKA PANDA KINEMATIC CHAIN  (links + joints with inertia)
+       Joint origins/axes/limits match moveit_resources_panda_description.
+       Dynamics damping added for Gazebo simulation stability.
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- ── Link 0 — base plate ───────────────────────────────────────────── -->
+  <link name="panda_link0">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link0.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link0.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="-0.041018 -0.00014 0.049974"/>
+      <mass value="0.629769"/>
+      <inertia ixx="3.0e-3" ixy="0" ixz="0"
+               iyy="3.0e-3" iyz="0" izz="2.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Link 1 ──────────────────────────────────────────────────────────── -->
+  <link name="panda_link1">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link1.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link1.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 -0.1"/>
+      <mass value="4.970684"/>
+      <inertia ixx="2.5e-2" ixy="0" ixz="0"
+               iyy="2.5e-2" iyz="0" izz="9.0e-3"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_joint1" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="0 0 0.333" rpy="0 0 0"/>
+    <parent link="panda_link0"/>
+    <child  link="panda_link1"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-2.9671" upper="2.9671" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 2 ──────────────────────────────────────────────────────────── -->
+  <link name="panda_link2">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link2.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link2.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 -0.03 0"/>
+      <mass value="0.646926"/>
+      <inertia ixx="2.0e-3" ixy="0" ixz="0"
+               iyy="1.0e-3" iyz="0" izz="1.5e-3"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_joint2" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-1.7628" soft_upper_limit="1.7628"/>
+    <origin xyz="0 0 0" rpy="-1.57079632679 0 0"/>
+    <parent link="panda_link1"/>
+    <child  link="panda_link2"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-1.8326" upper="1.8326" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 3 ──────────────────────────────────────────────────────────── -->
+  <link name="panda_link3">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link3.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link3.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.04 0.04 -0.07"/>
+      <mass value="3.228604"/>
+      <inertia ixx="1.0e-2" ixy="0" ixz="0"
+               iyy="1.0e-2" iyz="0" izz="6.0e-3"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_joint3" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="0 -0.316 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link2"/>
+    <child  link="panda_link3"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-2.9671" upper="2.9671" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 4 ──────────────────────────────────────────────────────────── -->
+  <link name="panda_link4">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link4.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link4.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="-0.05 0.10 0.03"/>
+      <mass value="3.587895"/>
+      <inertia ixx="1.0e-2" ixy="0" ixz="0"
+               iyy="1.0e-2" iyz="0" izz="5.0e-3"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_joint4" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-3.0718" soft_upper_limit="0.0175"/>
+    <origin xyz="0.0825 0 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link3"/>
+    <child  link="panda_link4"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-3.1416" upper="0.0873" velocity="2.3925"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 5 ──────────────────────────────────────────────────────────── -->
+  <link name="panda_link5">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link5.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link5.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="-0.01 0.04 -0.04"/>
+      <mass value="1.225946"/>
+      <inertia ixx="5.0e-3" ixy="0" ixz="0"
+               iyy="5.0e-3" iyz="0" izz="1.0e-3"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_joint5" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="-0.0825 0.384 0" rpy="-1.57079632679 0 0"/>
+    <parent link="panda_link4"/>
+    <child  link="panda_link5"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="12" lower="-2.9671" upper="2.9671" velocity="2.8710"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 6 ──────────────────────────────────────────────────────────── -->
+  <link name="panda_link6">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link6.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link6.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.06 -0.01 -0.01"/>
+      <mass value="1.666555"/>
+      <inertia ixx="3.0e-3" ixy="0" ixz="0"
+               iyy="3.0e-3" iyz="0" izz="2.0e-3"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_joint6" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-0.0175" soft_upper_limit="3.7525"/>
+    <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link5"/>
+    <child  link="panda_link6"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="12" lower="-0.0873" upper="3.8223" velocity="2.8710"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 7 ──────────────────────────────────────────────────────────── -->
+  <link name="panda_link7">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/link7.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/link7.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.01 -0.004 0.06"/>
+      <mass value="0.735522"/>
+      <inertia ixx="2.0e-3" ixy="0" ixz="0"
+               iyy="2.0e-3" iyz="0" izz="1.5e-3"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_joint7" type="revolute">
+    <safety_controller k_position="100.0" k_velocity="40.0"
+                       soft_lower_limit="-2.8973" soft_upper_limit="2.8973"/>
+    <origin xyz="0.088 0 0" rpy="1.57079632679 0 0"/>
+    <parent link="panda_link6"/>
+    <child  link="panda_link7"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="12" lower="-2.9671" upper="2.9671" velocity="2.8710"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ── Link 8 / flange — fixed, Gazebo welds it ─────────────────────────── -->
+  <link name="panda_link8"/>
+
+  <joint name="panda_joint8" type="fixed">
+    <origin xyz="0 0 0.107" rpy="0 0 0"/>
+    <parent link="panda_link7"/>
+    <child  link="panda_link8"/>
+  </joint>
+
+  <!-- ── Hand ─────────────────────────────────────────────────────────────── -->
+  <joint name="panda_hand_joint" type="fixed">
+    <parent link="panda_link8"/>
+    <child  link="panda_hand"/>
+    <origin xyz="0 0 0" rpy="0 0 -0.785398163397"/>
+  </joint>
+
+  <link name="panda_hand">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/hand.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/hand.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0.04"/>
+      <mass value="0.73"/>
+      <inertia ixx="1.0e-3" ixy="0" ixz="0"
+               iyy="1.0e-3" iyz="0" izz="1.0e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ── Fingers ───────────────────────────────────────────────────────────── -->
+  <link name="panda_leftfinger">
+    <visual>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/finger.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/finger.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.014"/>
+      <inertia ixx="1.0e-4" ixy="0" ixz="0"
+               iyy="1.0e-4" iyz="0" izz="1.0e-4"/>
+    </inertial>
+  </link>
+
+  <link name="panda_rightfinger">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 3.14159265359"/>
+      <geometry>
+        <mesh filename="$(find moveit_resources_panda_description)/meshes/visual/finger.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 3.14159265359"/>
+      <geometry>
+        <mesh filename="package://moveit_resources_panda_description/meshes/collision/finger.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.014"/>
+      <inertia ixx="1.0e-4" ixy="0" ixz="0"
+               iyy="1.0e-4" iyz="0" izz="1.0e-4"/>
+    </inertial>
+  </link>
+
+  <joint name="panda_finger_joint1" type="prismatic">
+    <parent link="panda_hand"/>
+    <child  link="panda_leftfinger"/>
+    <origin xyz="0 0 0.0584" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" lower="0.0" upper="0.04" velocity="0.2"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <joint name="panda_finger_joint2" type="prismatic">
+    <parent link="panda_hand"/>
+    <child  link="panda_rightfinger"/>
+    <origin xyz="0 0 0.0584" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit effort="20" lower="0.0" upper="0.04" velocity="0.2"/>
+    <mimic joint="panda_finger_joint1"/>
+    <dynamics damping="0.5" friction="0.0"/>
+  </joint>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       ros2_control: arm (7 DOF)
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <ros2_control name="PandaGazeboSystem" type="system">
+    <hardware>
+      <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+    </hardware>
+    <joint name="panda_joint1">
+      <command_interface name="position">
+        <param name="min">-2.8973</param>
+        <param name="max">2.8973</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint2">
+      <command_interface name="position">
+        <param name="min">-1.7628</param>
+        <param name="max">1.7628</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">-0.7854</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint3">
+      <command_interface name="position">
+        <param name="min">-2.8973</param>
+        <param name="max">2.8973</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint4">
+      <command_interface name="position">
+        <param name="min">-3.0718</param>
+        <param name="max">-0.0698</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">-2.3562</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint5">
+      <command_interface name="position">
+        <param name="min">-2.8973</param>
+        <param name="max">2.8973</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint6">
+      <command_interface name="position">
+        <param name="min">-0.0175</param>
+        <param name="max">3.7525</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">1.5708</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint7">
+      <command_interface name="position">
+        <param name="min">-2.8973</param>
+        <param name="max">2.8973</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.7854</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       ros2_control: hand (gripper)
+       upper=0.04 per finger; total opening = 8 cm when both fingers at max
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <ros2_control name="PandaHandGazeboSystem" type="system">
+    <hardware>
+      <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+    </hardware>
+    <joint name="panda_finger_joint1">
+      <command_interface name="position">
+        <param name="min">0</param>
+        <param name="max">0.04</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.02</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_finger_joint2">
+      <command_interface name="position">
+        <param name="min">0</param>
+        <param name="max">0.04</param>
+      </command_interface>
+      <state_interface name="position"><param name="initial_value">0.02</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Gazebo ros2_control plugin
+       robot_description fetched from robot_state_publisher via ROS service
+       to avoid Humble rcl argument-parser failure on long URDFs.
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <gazebo>
+    <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+      <robot_sim_type>gazebo_ros2_control/GazeboSystem</robot_sim_type>
+      <parameters>$(find vlm_robot_planner_bringup)/config/panda_controllers.yaml</parameters>
+      <robot_param>robot_description</robot_param>
+      <robot_param_node>robot_state_publisher</robot_param_node>
+    </plugin>
+  </gazebo>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Wrist camera (eye-in-hand, RealSense D435i approx.)
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <link name="wrist_camera_link">
+    <visual>
+      <geometry><box size="0.090 0.025 0.025"/></geometry>
+      <material name="DarkGrey"><color rgba="0.15 0.15 0.15 1.0"/></material>
+    </visual>
+    <inertial>
+      <mass value="0.072"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+
+  <joint name="wrist_camera_joint" type="fixed">
+    <parent link="panda_hand"/>
+    <child link="wrist_camera_link"/>
+    <!-- Camera looks along panda_hand -Z (toward gripper tips / table).
+         panda_hand +Z points toward arm body (upward), -Z toward gripper (downward).
+         rpy="0 -pi/2 0": pitch=-90° → camera +X = -panda_hand +Z = downward toward scene. -->
+    <origin xyz="0.06 0.0 0.05" rpy="0 ${-pi/2} 0"/>
+  </joint>
+
+  <!-- Optical frame: ROS camera convention (z forward, x right) -->
+  <link name="wrist_camera_optical_frame"/>
+  <joint name="wrist_camera_optical_joint" type="fixed">
+    <parent link="wrist_camera_link"/>
+    <child link="wrist_camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Gazebo visual materials — ensures arm links are rendered even when
+       .dae texture loading fails (common in Gazebo Classic + ROS 2 Humble)
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <gazebo reference="panda_link0"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_link1"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_link2"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_link3"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_link4"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_link5"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_link6"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_link7"><gravity>false</gravity><material>Gazebo/White</material></gazebo>
+  <gazebo reference="panda_hand"><gravity>false</gravity><material>Gazebo/DarkGrey</material></gazebo>
+  <gazebo reference="panda_leftfinger"><gravity>false</gravity><material>Gazebo/DarkGrey</material></gazebo>
+  <gazebo reference="panda_rightfinger"><gravity>false</gravity><material>Gazebo/DarkGrey</material></gazebo>
+
+  <!-- Gazebo camera sensor — publishes /camera/color/image_raw at 30 Hz -->
+  <gazebo reference="wrist_camera_link">
+    <sensor name="wrist_camera" type="camera">
+      <always_on>true</always_on>
+      <update_rate>30.0</update_rate>
+      <visualize>false</visualize>
+      <camera name="wrist_camera">
+        <horizontal_fov>1.204</horizontal_fov>  <!-- ~69° RealSense D435i -->
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip><near>0.02</near><far>10.0</far></clip>
+        <noise><type>gaussian</type><mean>0.0</mean><stddev>0.005</stddev></noise>
+      </camera>
+      <plugin name="wrist_camera_plugin" filename="libgazebo_ros_camera.so">
+        <ros>
+          <remapping>~/image_raw:=/camera/color/image_raw</remapping>
+          <remapping>~/camera_info:=/camera/color/camera_info</remapping>
+        </ros>
+        <camera_name>wrist_camera</camera_name>
+        <frame_name>wrist_camera_optical_frame</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="paint_brush">
+    <static>false</static>
+    <link name="brush_link">
+      <inertial>
+        <mass>0.085</mass>
+        <pose>-0.045 0 0 0 0 0</pose>
+        <inertia>
+          <ixx>0.000020</ixx><iyy>0.00038</iyy><izz>0.00039</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+
+      <!-- Wooden handle -->
+      <visual name="wood_handle"><geometry><mesh><uri>model://paint_brush/meshes/wood_handle.stl</uri></mesh></geometry><material><ambient>0.28 0.13 0.045 1</ambient><diffuse>0.62 0.31 0.10 1</diffuse><specular>0.08 0.06 0.04 1</specular></material></visual>
+      <visual name="handle_end_cap"><geometry><mesh><uri>model://paint_brush/meshes/handle_end_cap.stl</uri></mesh></geometry><material><ambient>0.18 0.07 0.02 1</ambient><diffuse>0.40 0.16 0.05 1</diffuse><specular>0.06 0.04 0.02 1</specular></material></visual>
+      <visual name="hole_top"><geometry><mesh><uri>model://paint_brush/meshes/hole_top.stl</uri></mesh></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.03 0.03 0.03 1</diffuse><specular>0.08 0.08 0.08 1</specular></material></visual>
+      <visual name="hole_bottom"><geometry><mesh><uri>model://paint_brush/meshes/hole_bottom.stl</uri></mesh></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.03 0.03 0.03 1</diffuse><specular>0.08 0.08 0.08 1</specular></material></visual>
+
+      <!-- Stainless ferrule -->
+      <visual name="ferrule_body"><geometry><mesh><uri>model://paint_brush/meshes/ferrule_body.stl</uri></mesh></geometry><material><ambient>0.20 0.21 0.22 1</ambient><diffuse>0.56 0.58 0.61 1</diffuse><specular>0.95 0.95 0.95 1</specular></material></visual>
+      <visual name="ferrule_face_top"><geometry><mesh><uri>model://paint_brush/meshes/ferrule_face_top.stl</uri></mesh></geometry><material><ambient>0.28 0.29 0.30 1</ambient><diffuse>0.68 0.70 0.73 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="ferrule_face_bottom"><geometry><mesh><uri>model://paint_brush/meshes/ferrule_face_bottom.stl</uri></mesh></geometry><material><ambient>0.28 0.29 0.30 1</ambient><diffuse>0.68 0.70 0.73 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="crimp1"><geometry><mesh><uri>model://paint_brush/meshes/ferrule_crimp_1.stl</uri></mesh></geometry><material><ambient>0.11 0.12 0.13 1</ambient><diffuse>0.34 0.36 0.39 1</diffuse><specular>0.85 0.85 0.85 1</specular></material></visual>
+      <visual name="crimp2"><geometry><mesh><uri>model://paint_brush/meshes/ferrule_crimp_2.stl</uri></mesh></geometry><material><ambient>0.11 0.12 0.13 1</ambient><diffuse>0.34 0.36 0.39 1</diffuse><specular>0.85 0.85 0.85 1</specular></material></visual>
+      <visual name="crimp3"><geometry><mesh><uri>model://paint_brush/meshes/ferrule_crimp_3.stl</uri></mesh></geometry><material><ambient>0.11 0.12 0.13 1</ambient><diffuse>0.34 0.36 0.39 1</diffuse><specular>0.85 0.85 0.85 1</specular></material></visual>
+      <visual name="rivet_top_1"><geometry><mesh><uri>model://paint_brush/meshes/rivet_top_1.stl</uri></mesh></geometry><material><ambient>0.17 0.17 0.18 1</ambient><diffuse>0.48 0.49 0.51 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="rivet_top_2"><geometry><mesh><uri>model://paint_brush/meshes/rivet_top_2.stl</uri></mesh></geometry><material><ambient>0.17 0.17 0.18 1</ambient><diffuse>0.48 0.49 0.51 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="rivet_bottom_1"><geometry><mesh><uri>model://paint_brush/meshes/rivet_bottom_1.stl</uri></mesh></geometry><material><ambient>0.17 0.17 0.18 1</ambient><diffuse>0.48 0.49 0.51 1</diffuse><specular>1 1 1 1</specular></material></visual>
+      <visual name="rivet_bottom_2"><geometry><mesh><uri>model://paint_brush/meshes/rivet_bottom_2.stl</uri></mesh></geometry><material><ambient>0.17 0.17 0.18 1</ambient><diffuse>0.48 0.49 0.51 1</diffuse><specular>1 1 1 1</specular></material></visual>
+
+      <!-- Natural bristles -->
+      <visual name="bristles_center"><geometry><mesh><uri>model://paint_brush/meshes/bristles_center.stl</uri></mesh></geometry><material><ambient>0.30 0.21 0.11 1</ambient><diffuse>0.72 0.55 0.31 1</diffuse><specular>0.04 0.04 0.03 1</specular></material></visual>
+      <visual name="bristles_side_l"><geometry><mesh><uri>model://paint_brush/meshes/bristles_side_l.stl</uri></mesh></geometry><material><ambient>0.23 0.16 0.08 1</ambient><diffuse>0.58 0.42 0.21 1</diffuse><specular>0.03 0.03 0.02 1</specular></material></visual>
+      <visual name="bristles_side_r"><geometry><mesh><uri>model://paint_brush/meshes/bristles_side_r.stl</uri></mesh></geometry><material><ambient>0.25 0.18 0.09 1</ambient><diffuse>0.62 0.46 0.24 1</diffuse><specular>0.03 0.03 0.02 1</specular></material></visual>
+      <visual name="bristles_top"><geometry><mesh><uri>model://paint_brush/meshes/bristles_top.stl</uri></mesh></geometry><material><ambient>0.33 0.24 0.13 1</ambient><diffuse>0.76 0.59 0.34 1</diffuse><specular>0.03 0.03 0.02 1</specular></material></visual>
+      <visual name="bristles_bottom"><geometry><mesh><uri>model://paint_brush/meshes/bristles_bottom.stl</uri></mesh></geometry><material><ambient>0.27 0.19 0.10 1</ambient><diffuse>0.66 0.49 0.26 1</diffuse><specular>0.03 0.03 0.02 1</specular></material></visual>
+
+      <!-- Simplified collision: handle + ferrule/bristle region -->
+      <collision name="handle_collision"><pose>-0.112 0 0 0 0 0</pose><geometry><box><size>0.148 0.043 0.020</size></box></geometry><surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+      <collision name="head_collision"><pose>0.036 0 0 0 0 0</pose><geometry><box><size>0.145 0.053 0.019</size></box></geometry><surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+
+      <velocity_decay><linear>0.06</linear><angular>0.12</angular></velocity_decay>
+    </link>
+  </model>
+</sdf>

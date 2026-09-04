@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="m10_hex_nut">
+    <static>false</static>
+    <link name="link">
+      <inertial>
+        <pose>-4.90902755e-08 -1.50537393e-07 0.00399999893 0 0 0</pose>
+        <mass>0.0114247716</mass>
+        <inertia>
+          <ixx>3.26999519e-07</ixx><ixy>-2.31322333e-12</ixy><ixz>3.03646231e-11</ixz>
+          <iyy>3.2699297e-07</iyy><iyz>-9.89915851e-12</iyz><izz>5.51279197e-07</izz>
+        </inertia>
+      </inertial>
+      <visual name="threaded_visual">
+        <geometry><mesh><uri>model://m10_hex_nut/meshes/m10_hex_nut.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+        <material>
+          <ambient>0.42 0.43 0.45 1</ambient>
+          <diffuse>0.68 0.70 0.73 1</diffuse>
+          <specular>0.85 0.85 0.85 1</specular>
+        </material>
+      </visual>
+      <collision name="nut_collision">
+        <pose>0 0 0.004000 0 0 0</pose>
+        <geometry><cylinder><radius>0.009815</radius><length>0.008000</length></cylinder></geometry>
+        <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface>
+      </collision>
+      <velocity_decay><linear>0.03</linear><angular>0.05</angular></velocity_decay>
+    </link>
+  </model>
+</sdf>

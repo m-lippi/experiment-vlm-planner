@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<sdf version="1.6">
+  <model name="tool_cabinet">
+    <static>true</static>
+    <link name="link">
+      <visual name="detailed_mesh_visual">
+        <geometry>
+          <mesh>
+            <uri>model://tool_cabinet/meshes/tool_cabinet.stl</uri>
+          </mesh>
+        </geometry>
+      <material><ambient>0.16 0.18 0.2 1</ambient><diffuse>0.16 0.18 0.2 1</diffuse><specular>0.08 0.08 0.08 1</specular></material></visual>
+      <collision name="body_collision">
+        <pose>0 0 0.6 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>1.0 0.55 1.2</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="top_collision">
+        <pose>0 0 1.23 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>1.05 0.60 0.06</size>
+          </box>
+        </geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>

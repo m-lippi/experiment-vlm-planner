@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>vlm_robot_planner_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    Launch files, Gazebo worlds, URDF, and ros2_control config for the
+    VLM-RobotPlanner simulation (Franka Panda + tabletop scene, Gazebo Classic 11).
+  </description>
+  <maintainer email="o.hidalgomartinez@dxc.com">Alexis Martinez</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Launch deps -->
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>gazebo_ros2_control</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>gripper_controllers</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>moveit_ros_move_group</exec_depend>
+  <exec_depend>moveit_configs_utils</exec_depend>
+  <exec_depend>moveit_resources_panda_moveit_config</exec_depend>
+  <exec_depend>moveit_resources_panda_description</exec_depend>
+  <!-- FR3 real-robot deps (franka_ros2 — cloned into ros2_ws/src/franka_description,
+       ros2_ws/src/franka_ros2/franka_fr3_moveit_config) -->
+  <exec_depend>franka_description</exec_depend>
+  <exec_depend>franka_fr3_moveit_config</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

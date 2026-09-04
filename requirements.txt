@@ -1,0 +1,17 @@
+# VLM inference — Qwen3-VL-8B-Instruct, tested on RTX 3090 Ti, CUDA 12.x
+torch>=2.3.0
+torchvision
+transformers>=5.0.0
+accelerate>=0.30.0
+qwen-vl-utils
+Pillow>=10.0.0
+
+# Testing
+pytest>=8.0.0
+
+# Utilities
+pyyaml
+
+# RealSense D435i (real robot — optional, install separately if needed)
+# pip install pyrealsense2
+# Requires librealsense2 system library: https://github.com/IntelRealSense/librealsense

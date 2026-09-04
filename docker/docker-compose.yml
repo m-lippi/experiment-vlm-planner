@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Architecture:
+#   HOST      — VLM inference (Qwen3-VL) + pure-Python pipeline (GPU required)
+#   ros2      — ROS 2 Humble + Gazebo Classic + MoveIt 2 + franka_ros2 drivers
+#
+# Real robot stack (no ROS 1 bridge required):
+#   franka_hardware (ros2_control plugin) → libfranka → FCI → FR3 over Ethernet
+#   franka_gripper_node (ROS 2) → libfranka → gripper
+#
+# Profiles:
+#   (no profile / default)  →  simulation only: docker compose up
+#   real                    →  real robot:       docker compose --profile real up
+#
+# Communication:
+#   network_mode: host  →  ROS 2 DDS multicast is shared; topics visible on host
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  ros2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: vlm-robot-planner:latest
+    container_name: vlm_ros2
+
+    # Share host network: ROS 2 DDS works across host ↔ container
+    network_mode: host
+
+    # Share host IPC namespace: required for MIT-SHM X11 shared memory.
+    ipc: host
+
+    # SYS_NICE: allows franka_hardware to set SCHED_FIFO real-time scheduling
+    # priority for the FCI control loop (required by libfranka for reliable
+    # 1 kHz communication with the robot controller).
+    cap_add:
+      - SYS_NICE
+
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ROS_DOMAIN_ID=42
+      # Disabilita SHM FastDDS: compatibilità tra container e host.
+      # UDP funziona correttamente via network_mode: host.
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/workspace/docker/fastdds_no_shm.xml
+      - VLMRP_REPO_ROOT=/workspace
+      # Gazebo Classic model paths
+      - GAZEBO_MODEL_PATH=/usr/share/gazebo-11/models:/workspace/ros2_ws/install/vlm_robot_planner_bringup/share/vlm_robot_planner_bringup/models:/workspace/ros2_ws/src/vlm_robot_planner_bringup/models:/workspace/ros2_ws/src/vlm_robot_planner_bringup/models/3dgems/stationery/stationery:/workspace/ros2_ws/src/vlm_robot_planner_bringup/models/3dgems/kitchen/kitchen:/workspace/ros2_ws/src/vlm_robot_planner_bringup/models/3dgems/tools/tools:/workspace/ros2_ws/src/vlm_robot_planner_bringup/models/3dgems/furniture/furniture:/workspace/ros2_ws/src/vlm_robot_planner_bringup/models/3dgems/food/food:/workspace/ros2_ws/src/vlm_robot_planner_bringup/models/3dgems/electronics/electronics
+      - GAZEBO_RESOURCE_PATH=/usr/share/gazebo-11
+      - GAZEBO_PLUGIN_PATH=/opt/boeing_ws/install/boeing_gazebo_model_attachment_plugin/lib
+
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ../ros2_ws/src:/workspace/ros2_ws/src:rw
+      - ../planner:/workspace/planner:rw
+      - ../vlm:/workspace/vlm:rw
+      - ../simulation:/workspace/simulation:rw
+      - ../pddl:/workspace/pddl:rw
+      - ../scripts:/workspace/scripts:ro
+      - ../docker:/workspace/docker:ro
+      - ../data:/workspace/data:rw
+      - ../data/gazebo:/root/.gazebo:rw
+
+    devices:
+      - /dev/dri:/dev/dri
+
+    stdin_open: true
+    tty: true
+    command: bash
+
+  # ── Real robot profile ─────────────────────────────────────────────────────
+  # Starts the ros2 container with the real robot launch file.
+  # The robot must be reachable at ROBOT_IP with FCI enabled in Franka Desk.
+  #
+  # Usage:
+  #   ROBOT_IP=192.168.1.100 docker compose --profile real up
+  # or via: bin/start_real.sh --robot-ip <IP>
+  ros2_real:
+    profiles: ["real"]
+    extends:
+      service: ros2
+    container_name: vlm_ros2_real
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ROS_DOMAIN_ID=42
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/workspace/docker/fastdds_no_shm.xml
+      - VLMRP_REPO_ROOT=/workspace
+      - VLM_ROBOT=fr3
+    command: >
+      ros2 launch vlm_robot_planner_bringup real_robot.launch.py
+      robot_ip:=${ROBOT_IP:-192.168.1.100}

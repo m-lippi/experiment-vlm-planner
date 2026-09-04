@@ -1,0 +1,78 @@
+<?xml version='1.0'?>
+<sdf version="1.4">
+  <model name="hammer">
+    <static>false</static>
+    <link name="link">
+      <!-- <inertial>
+        <pose>-0.028570860769310643 -0.012672673714671625 0.015653484146085365 -1.3922124758496062 -1.5439736609005625 0.18273929130966124</pose>
+        <mass>0.00025894043237553564</mass>
+        <inertia>
+          <ixx>3.077768644106045e-06</ixx>
+          <ixy>-2.681915276949575e-23</ixy>
+          <ixz>1.4693222138696596e-22</ixz>
+          <iyy>3.0006065150009704e-06</iyy>
+          <iyz>-2.5087587327174474e-22</iyz>
+          <izz>9.993910910349294e-08</izz>
+        </inertia>
+      </inertial> -->
+
+  <inertial>
+    <mass>0.7</mass>
+    <inertia>
+      <ixx>0.003</ixx>
+      <iyy>0.012</iyy>
+      <izz>0.012</izz>
+      <ixy>0</ixy>
+      <ixz>0</ixz>
+      <iyz>0</iyz>
+    </inertia>
+  </inertial>
+
+    <collision name="collision">
+      <pose>0 0 0 0 0 0</pose>
+      <geometry>
+        <box>
+          <size>0.30 0.10 0.05</size>
+        </box>
+      </geometry>
+
+      <surface>
+        <friction>
+          <ode>
+            <mu>1.0</mu>
+            <mu2>1.0</mu2>
+          </ode>
+        </friction>
+
+        <contact>
+          <ode>
+            <kp>100000</kp>
+            <kd>10</kd>
+            <max_vel>0.1</max_vel>
+            <min_depth>0.001</min_depth>
+          </ode>
+        </contact>
+      </surface>
+    </collision>
+
+    <velocity_decay>
+      <linear>0.05</linear>
+      <angular>0.1</angular>
+    </velocity_decay>
+
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://048_hammer/google_16k/textured.obj</uri>
+	        </mesh>
+        </geometry>
+        <material>
+          <script>
+            <uri>model://048_hammer/hammer.material</uri>
+            <name>hammer</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
