@@ -1,13 +1,9 @@
 """
 MoveIt2 Python client — wraps the /move_group action server.
 
-Intended for use with franka_ros2 + franka_hardware (ros2_control), where
-MoveIt 2 communicates directly with the ros2_control controller stack via the
-standard FollowJointTrajectory and ExecuteTrajectory action servers.
-
-No bridging workaround is needed: franka_hardware exposes a native ROS 2
-ros2_control interface, so moveit_simple_controller_manager can reach the arm
-and gripper action servers directly.
+MoveIt 2 communicates through its standard MoveGroup and ExecuteTrajectory
+actions. In simulation those end at ros2_control; on the real robot they end at
+the local FollowJointTrajectory-to-ROS-1 topic adapter.
 
 Public interface (mirrors pymoveit2.MoveIt2):
   move_to_pose(position, quat_xyzw)
@@ -53,8 +49,8 @@ class MoveIt2Client:
 
     Communicates with move_group via the /move_group action (planning +
     execution) and /execute_trajectory action (Cartesian path execution).
-    Both actions are served by MoveIt 2 running against franka_ros2's
-    ros2_control stack — no action bridging or topic workarounds needed.
+    Both actions are served by MoveIt 2; the configured controller manager
+    selects either the simulation controller or the real-robot adapter.
     """
 
     def __init__(

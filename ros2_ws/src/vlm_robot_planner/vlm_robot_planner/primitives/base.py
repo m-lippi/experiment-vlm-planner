@@ -144,7 +144,7 @@ class ArmPrimitive:
     def __init__(self, node: Node, moveit2, tf_buffer=None) -> None:
         self._node    = node
         self._moveit2 = moveit2
-        # GripperCommand action — exposed by franka_gripper_node (franka_ros2).
+        # GripperCommand action — simulation controller or ROS 1 adapter.
         self._gripper_client = ActionClient(node, GripperCommand, _GRIPPER_ACTION)
 
         # Shared TF buffer passed from orchestrator — one listener for all primitives.
@@ -297,7 +297,7 @@ class ArmPrimitive:
         return self._send_gripper_goal(position=_GRIPPER_CLOSED, max_effort=effort)
 
     def _send_gripper_goal(self, position: float, max_effort: float) -> bool:
-        """Send a GripperCommand action goal to franka_gripper_node (franka_ros2).
+        """Send a GripperCommand action goal to the configured gripper adapter.
 
         Uses threading.Event + callbacks so it is safe to call from any
         background thread without conflicting with the MultiThreadedExecutor.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_real_move.py — Valida la catena MoveIt 2 → bridge → FR3.
+test_real_move.py — Valida la catena MoveIt 2 → adapter → bridge → ROS 1 → FR3.
 
 Sequenza di test:
   1. Connettività: verifica che /joint_states arrivi con nomi fr3_joint*
@@ -35,7 +35,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import JointState
 
-# franka_hardware / joint_state_broadcaster pubblica con BEST_EFFORT.
+# Accept BEST_EFFORT because /joint_states arrives through ros1_bridge.
 _SENSOR_QOS = QoSProfile(
     reliability=ReliabilityPolicy.BEST_EFFORT,
     history=HistoryPolicy.KEEP_LAST,
@@ -58,7 +58,10 @@ except ImportError as e:
 
 # ── FR3 "ready pose" (rad) — configurazione di sicurezza standard Franka ─────
 # j1=0°  j2=-45°  j3=0°  j4=-135°  j5=0°  j6=+90°  j7=+45°
-_READY_POSE = [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398]
+# _READY_POSE = [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398]
+_READY_POSE = [0.0, -1.1, 0.0, -2.49, 0.18, 2.16, 0.785398]
+
+
 
 _SEP = "=" * 62
 
@@ -83,8 +86,7 @@ class _RealMoveTestNode(Node):
         self._joint_event = threading.Event()
         self._current_joints: list[float] | None = None
 
-        # /joint_states is published by joint_state_broadcaster (ros2_control).
-        # Only FR3 joints are included — no filter node needed.
+        # /joint_states is published by the ROS 1 robot stack and bridged to ROS 2.
         self.create_subscription(
             JointState, "/joint_states", self._on_js, _SENSOR_QOS, callback_group=cb
         )
@@ -168,10 +170,9 @@ def run(args: argparse.Namespace) -> int:
     if joints_now is None:
         print("[FAIL] Nessun joint state ricevuto su /joint_states.")
         print("       Verificare:")
-        print("         1. robot raggiungibile via rete (ping robot_ip)")
-        print("         2. FCI abilitata in Franka Desk")
-        print("         3. launch file avviato: ros2 launch vlm_robot_planner_bringup")
-        print("            real_robot.launch.py robot_ip:=<IP>")
+        print("         1. ROS master raggiungibile su 192.168.131.1:11311")
+        print("         2. /joint_states pubblicato dal computer ROS 1")
+        print("         3. ros1_bridge e real_robot.launch.py avviati")
         rclpy.shutdown()
         return 1
 
@@ -229,7 +230,7 @@ def run(args: argparse.Namespace) -> int:
     print("[OK]  Posizione iniziale raggiunta.")
     print(f"\n{_SEP}")
     print("TUTTI I TEST SUPERATI.")
-    print("La catena MoveIt 2 → bridge → controller → FR3 funziona correttamente.")
+    print("La catena MoveIt 2 → adapter → bridge → controller ROS 1 funziona.")
     print(f"{_SEP}\n")
     rclpy.shutdown()
     return 0

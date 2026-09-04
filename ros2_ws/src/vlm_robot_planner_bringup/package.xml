@@ -24,8 +24,7 @@
   <exec_depend>moveit_configs_utils</exec_depend>
   <exec_depend>moveit_resources_panda_moveit_config</exec_depend>
   <exec_depend>moveit_resources_panda_description</exec_depend>
-  <!-- FR3 real-robot deps (franka_ros2 — cloned into ros2_ws/src/franka_description,
-       ros2_ws/src/franka_ros2/franka_fr3_moveit_config) -->
+  <!-- FR3 model used by MoveIt; physical hardware remains on the ROS 1 PC. -->
   <exec_depend>franka_description</exec_depend>
   <exec_depend>franka_fr3_moveit_config</exec_depend>
   <exec_depend>xacro</exec_depend>

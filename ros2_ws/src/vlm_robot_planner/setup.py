@@ -15,6 +15,8 @@ setup(
     entry_points={
         "console_scripts": [
             "orchestrator = vlm_robot_planner.orchestrator:main",
+            "trajectory_topic_adapter = vlm_robot_planner.trajectory_topic_adapter:main",
+            "gripper_action_adapter = vlm_robot_planner.gripper_action_adapter:main",
         ],
     },
 )

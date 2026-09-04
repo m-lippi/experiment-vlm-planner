@@ -1,0 +1,13 @@
+- run su robot vero 
+	bin/start_real.sh
+
+
+- per entrare in docker 
+	docker 
+	
+Working 
+- camera from nuc /camera/color/image_raw
+
+	
+TO DO:  
+run camera da nuc -- dovrebbe essere visibile 

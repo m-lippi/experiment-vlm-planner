@@ -252,7 +252,9 @@ The container writes a completion signal to `data/` after each primitive; `run_l
 
 ## Real robot deployment
 
-The real Franka Panda runs **franka_ros** (ROS 1 Noetic) on the robot PC. The planning stack uses ROS 2 Humble. A dedicated bridge container translates between the two.
+The real Franka FR3 is owned by a **ROS 1 Noetic** robot PC. The planning
+stack uses ROS 2 Humble, and a dedicated container translates common topics
+between the two systems.
 
 ### Physical setup (measured values)
 
@@ -313,8 +315,15 @@ Keyboard shortcuts (active when the image area has focus, disabled while typing 
 ### Network requirements
 
 - Development machine and robot PC must be on the same LAN.
-- The robot PC (`ROBOT_IP`) runs: `roscore`, `franka_ros`, and the RealSense driver.
+- The ROS 1 robot PC is `192.168.131.1` by default.
+- The robot PC runs `roscore`, the Franka hardware stack, and a running
+  `/effort_joint_trajectory_controller`.
+- It publishes `sensor_msgs/JointState` on `/joint_states` and subscribes to
+  `trajectory_msgs/JointTrajectory` on
+  `/effort_joint_trajectory_controller/command`.
 - Both machines must be able to ping each other.
+- Their clocks should be synchronized (NTP/chrony), because trajectory header
+  timestamps cross the machine boundary.
 
 ### Step 1 — Build the bridge image (once)
 
@@ -322,17 +331,43 @@ Keyboard shortcuts (active when the image area has focus, disabled while typing 
 docker compose --profile real build ros1_bridge
 ```
 
-This builds `docker/Dockerfile.bridge` (Ubuntu 20.04 + ROS Noetic + ROS 2 Foxy + `ros1_bridge`). It takes several minutes the first time.
+This builds `docker/Dockerfile.bridge` (Ubuntu 20.04 + ROS Noetic + ROS 2
+Foxy + `ros1_bridge`). The bridge carries common ROS messages; it does not try
+to bridge the incompatible ROS 1 and ROS 2 action transports directly.
 
 ### Step 2 — Launch the full real-robot stack
 
 ```bash
-bin/start_real.sh --robot-ip <ROBOT_PC_IP>
+bin/start_real.sh
+
+# Override either address when needed:
+bin/start_real.sh --robot-ip 192.168.131.1 --local-ip 192.168.131.2
 ```
 
 This script:
-1. Starts the ROS 1 ↔ ROS 2 bridge (`bin/start_bridge.sh`) — bridges `/joint_states`, camera topics, and trajectory goals between the two ROS versions.
-2. Launches MoveIt 2 in the `ros2` container with `real_robot.launch.py` (no Gazebo).
+
+1. Detects this computer's IP on the robot network and exports it as `ROS_IP`.
+2. Starts the ROS 1 ↔ ROS 2 topic bridge connected to
+   `http://192.168.131.1:11311`.
+3. Launches MoveIt 2, `robot_state_publisher`, the Orchestrator, and a local
+   trajectory action adapter (no Gazebo and no local hardware driver).
+
+The command path is:
+
+```
+MoveIt 2
+  -> ROS 2 FollowJointTrajectory action
+  -> trajectory_topic_adapter
+  -> /effort_joint_trajectory_controller/command
+  -> ros1_bridge
+  -> ROS 1 effort_joint_trajectory_controller
+  -> robot
+```
+
+The return path is ROS 1 `/joint_states` → `ros1_bridge` → MoveIt 2 and the
+adapter. The adapter filters the shared Husky/FR3 state stream to
+`/fr3_joint_states` for MoveIt and reports action success only when every arm
+joint reaches the configured goal tolerance.
 
 ### Step 3 — Run a task (same as simulation)
 
@@ -349,19 +384,52 @@ Or for a closed-loop session:
 bin/run_loop.sh --task "pick the pen and place it on the notebook"
 ```
 
-The pipeline is identical to simulation: VLM inference runs on the host GPU, the PDDL plan is dispatched to the Orchestrator node inside the container, and MoveIt 2 sends trajectories to the real arm via the bridge.
+The planning pipeline is identical to simulation. Only trajectory execution is
+routed through the ROS 1 computer.
 
-### Bridge mode options
+### Validate before moving
 
-| Mode | Command | When to use |
-|------|---------|-------------|
-| `dynamic` (default) | `bin/start_bridge.sh --robot-ip <IP>` | Development — bridges all matching topic types automatically |
-| `static` | `bin/start_bridge.sh --robot-ip <IP> --mode static` | Production — bridges only the topics listed in `docker/bridge_topics.yaml` |
-| `pairs` | `bin/start_bridge.sh --robot-ip <IP> --mode pairs` | Diagnostic — prints matched/unmatched topic types and exits |
+In a second terminal, first verify that bridged states use the expected FR3
+joint names without commanding motion:
+
+```bash
+bin/run_test_move.sh --check-only
+```
+
+Then run the interactive 10%-speed movement test:
+
+```bash
+bin/run_test_move.sh --velocity 0.1
+```
+
+If the ROS 1 stack publishes `panda_joint1` … `panda_joint7` instead of
+`fr3_joint1` … `fr3_joint7`, do not move the robot: the MoveIt model and adapter
+must first be switched to the Panda naming convention.
+
+### Physical pick/place smoke test
+
+The real stack includes a dedicated gripper adapter because ROS 1 and ROS 2
+action transports are incompatible. It targets the ROS 1 action
+`/franka_gripper/gripper_action` and adds the two synthetic finger states MoveIt
+needs to complete the FR3 state.
+
+With an object already positioned at the current gripper pose, validate the
+interfaces without motion and then run the guarded sequence:
+
+```bash
+bin/run_test_pick_place.sh --check-only
+bin/run_test_pick_place.sh --lift 0.10 --place-y 0.10
+```
+
+The sequence opens and closes the gripper at its current pose, lifts vertically,
+moves to the requested XY offset, descends to the original height, releases the
+object, and retreats. It defaults to 10% velocity and asks for confirmation
+before grasping.
 
 ### Environment variables for real robot
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `ROS_MASTER_URI` | `http://192.168.1.100:11311` | Set automatically by `start_bridge.sh` from `--robot-ip` |
-| `ROS_IP` | `192.168.1.50` | Set automatically to the local machine's IP; prevents ROS 1 from advertising the wrong address |
+| `ROS_MASTER_URI` | `http://192.168.131.1:11311` | Set in the bridge container from `--robot-ip` |
+| `ROS_IP` | e.g. `192.168.131.2` | Auto-detected or set with `--local-ip`; lets the ROS 1 PC call back into the bridge |
+| `ROS_DOMAIN_ID` | `42` | Shared DDS domain used by the bridge and ROS 2 container |

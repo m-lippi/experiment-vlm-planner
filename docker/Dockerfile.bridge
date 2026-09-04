@@ -1,0 +1,34 @@
+FROM ros:foxy-ros-base-focal
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ROS 1 and ROS 2 must coexist in one Focal image for ros1_bridge.  The bridge
+# is only used for common topic types (JointState, JointTrajectory, TF, images).
+RUN curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -o /usr/share/keyrings/ros1-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/ros1-archive-keyring.gpg] http://packages.ros.org/ros/ubuntu focal main" \
+        > /etc/apt/sources.list.d/ros1.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-noetic-ros-base \
+        ros-noetic-control-msgs \
+        ros-noetic-trajectory-msgs \
+        ros-noetic-message-generation \
+        ros-noetic-message-runtime \
+        ros-noetic-actionlib-msgs \
+        ros-foxy-ros1-bridge \
+        ros-foxy-control-msgs \
+        ros-foxy-trajectory-msgs \
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ros1_ws/ /opt/ros1_ws/
+
+RUN bash -c "source /opt/ros/noetic/setup.bash && \
+    cd /opt/ros1_ws && \
+    catkin_make"
+
+COPY docker/bridge_entrypoint.sh /bridge_entrypoint.sh
+RUN chmod +x /bridge_entrypoint.sh
+
+ENTRYPOINT ["/bridge_entrypoint.sh"]

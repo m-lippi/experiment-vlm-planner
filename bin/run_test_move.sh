@@ -5,8 +5,7 @@
 #   bin/run_test_move.sh [--velocity 0.1] [--check-only] [--no-confirm]
 #
 # Prerequisites:
-#   - bin/start_bridge.sh is running in another terminal
-#   - bin/start_real.sh   is running in another terminal (MoveIt 2 ready)
+#   - bin/start_real.sh is running in another terminal (bridge + MoveIt ready)
 
 VELOCITY="0.1"
 EXTRA_ARGS=""
@@ -41,7 +40,7 @@ CONTAINER_ID=$(docker ps --filter "ancestor=vlm-robot-planner:latest" --format "
 
 if [[ -z "$CONTAINER_ID" ]]; then
     echo "[ERROR] Nessun container ros2 in esecuzione."
-    echo "Avvia prima: bin/start_real.sh --robot-ip <IP>"
+    echo "Avvia prima: bin/start_real.sh"
     exit 1
 fi
 

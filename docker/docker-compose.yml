@@ -1,11 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Architecture:
 #   HOST      — VLM inference (Qwen3-VL) + pure-Python pipeline (GPU required)
-#   ros2      — ROS 2 Humble + Gazebo Classic + MoveIt 2 + franka_ros2 drivers
+#   ros2      — ROS 2 Humble + Gazebo Classic + MoveIt 2
+#   ros1_bridge — ROS 1 Noetic <-> ROS 2 Foxy common-topic bridge
 #
-# Real robot stack (no ROS 1 bridge required):
-#   franka_hardware (ros2_control plugin) → libfranka → FCI → FR3 over Ethernet
-#   franka_gripper_node (ROS 2) → libfranka → gripper
+# Real robot stack:
+#   MoveIt 2 -> trajectory adapter -> ros1_bridge -> ROS 1
+#   effort_joint_trajectory_controller -> Franka hardware
 #
 # Profiles:
 #   (no profile / default)  →  simulation only: docker compose up
@@ -86,4 +87,40 @@ services:
       - VLM_ROBOT=fr3
     command: >
       ros2 launch vlm_robot_planner_bringup real_robot.launch.py
-      robot_ip:=${ROBOT_IP:-192.168.1.100}
+      rviz:=${RVIZ:-true}
+
+  ros1_bridge:
+    profiles: ["real"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.bridge
+    image: vlm-robot-planner-ros1-bridge:latest
+    container_name: vlm_ros1_bridge
+    network_mode: host
+    environment:
+      - ROS_MASTER_URI=http://${ROBOT_IP:-192.168.131.1}:11311
+      - ROS_IP=${LOCAL_IP}
+      - ROS_DOMAIN_ID=42
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/workspace/docker/fastdds_no_shm.xml
+    volumes:
+      - ../docker:/workspace/docker:ro
+    restart: unless-stopped
+
+  ros1_gripper_adapter:
+    profiles: ["real"]
+    image: vlm-robot-planner-ros1-bridge:latest
+    container_name: vlm_ros1_gripper_adapter
+    network_mode: host
+    environment:
+      - ROS_MASTER_URI=http://${ROBOT_IP:-192.168.131.1}:11311
+      - ROS_IP=${LOCAL_IP}
+    volumes:
+      - ../scripts:/workspace/scripts:ro
+    entrypoint: ["/bin/bash", "-c"]
+    # command:
+    #   - source /opt/ros/noetic/setup.bash && exec python3 /workspace/scripts/ros1_gripper_adapter.py
+    command:
+    - source /opt/ros/noetic/setup.bash &&
+      source /opt/ros1_ws/devel/setup.bash &&
+      exec python3 /workspace/scripts/ros1_gripper_adapter.py
+    restart: unless-stopped

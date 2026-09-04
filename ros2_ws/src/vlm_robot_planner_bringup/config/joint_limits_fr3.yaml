@@ -1,43 +1,46 @@
 # MoveIt 2 joint velocity/acceleration limits for Franka Research 3 (FR3).
 # Values from franka_description/robots/fr3/joint_limits.yaml.
-# has_acceleration_limits: false — MoveIt uses scaling factors instead.
+# PILZ requires explicit acceleration limits for every joint in the planning
+# group. Values mirror the conservative position-based deceleration limits in
+# franka_description/robots/fr3/joint_limits.yaml. Runtime scaling is applied
+# on top (the real-robot movement test defaults to 10%).
 
 joint_limits:
   fr3_joint1:
     has_velocity_limits: true
     max_velocity: 2.62
-    has_acceleration_limits: false
-    max_acceleration: 0.0
+    has_acceleration_limits: true
+    max_acceleration: 6.0
   fr3_joint2:
     has_velocity_limits: true
     max_velocity: 2.62
-    has_acceleration_limits: false
-    max_acceleration: 0.0
+    has_acceleration_limits: true
+    max_acceleration: 2.585
   fr3_joint3:
     has_velocity_limits: true
     max_velocity: 2.62
-    has_acceleration_limits: false
-    max_acceleration: 0.0
+    has_acceleration_limits: true
+    max_acceleration: 3.5
   fr3_joint4:
     has_velocity_limits: true
     max_velocity: 2.62
-    has_acceleration_limits: false
-    max_acceleration: 0.0
+    has_acceleration_limits: true
+    max_acceleration: 4.0
   fr3_joint5:
     has_velocity_limits: true
     max_velocity: 5.26
-    has_acceleration_limits: false
-    max_acceleration: 0.0
+    has_acceleration_limits: true
+    max_acceleration: 17.0
   fr3_joint6:
     has_velocity_limits: true
     max_velocity: 4.18
-    has_acceleration_limits: false
-    max_acceleration: 0.0
+    has_acceleration_limits: true
+    max_acceleration: 5.5
   fr3_joint7:
     has_velocity_limits: true
     max_velocity: 5.26
-    has_acceleration_limits: false
-    max_acceleration: 0.0
+    has_acceleration_limits: true
+    max_acceleration: 17.0
   fr3_finger_joint1:
     has_velocity_limits: true
     max_velocity: 0.04

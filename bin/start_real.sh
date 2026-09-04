@@ -1,76 +1,54 @@
 #!/bin/bash
-# start_real.sh — Avvia lo stack completo per il robot reale FR3 via franka_ros2.
-#
-# Architettura (nessun bridge ROS 1 richiesto):
-#   franka_hardware (ros2_control plugin) → libfranka → FCI → FR3
-#   franka_gripper_node → libfranka → gripper
-#   ros2_control controller_manager → fr3_arm_controller (JointTrajectoryController)
-#   MoveIt 2 move_group → FollowJointTrajectory → fr3_arm_controller
-#
-# Prerequisiti:
-#   - FCI abilitata in Franka Desk (schermata "Settings → End-Effector")
-#   - Robot raggiungibile all'IP indicato (ping funzionante)
-#   - Docker image costruita: docker compose build ros2
-#   - Nessun ROS 1 bridge necessario
-#
-# Utilizzo:
-#   bin/start_real.sh --robot-ip 192.168.131.1
+# Start the ROS 1 bridge and the ROS 2 MoveIt stack for the physical FR3.
 
-set -e
+set -euo pipefail
 
-ROBOT_IP=""
+ROBOT_IP="192.168.131.1"
+LOCAL_IP=""
+RVIZ="true"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --robot-ip)
-            ROBOT_IP="$2"
-            shift 2
-            ;;
+        --robot-ip) ROBOT_IP="$2"; shift 2 ;;
+        --local-ip) LOCAL_IP="$2"; shift 2 ;;
+        --no-rviz) RVIZ="false"; shift ;;
         -h|--help)
-            echo "Utilizzo: $0 --robot-ip <IP>"
+            echo "Usage: $0 [--robot-ip IP] [--local-ip IP] [--no-rviz]"
+            echo "Default ROS 1 computer: 192.168.131.1"
             exit 0
             ;;
-        *)
-            echo "Argomento sconosciuto: $1"
-            exit 1
-            ;;
+        *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-if [[ -z "$ROBOT_IP" ]]; then
-    echo "Errore: --robot-ip è obbligatorio."
-    echo "Utilizzo: $0 --robot-ip <IP>"
+if [[ -z "$LOCAL_IP" ]]; then
+    LOCAL_IP=$(ip route get "$ROBOT_IP" 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
+fi
+if [[ -z "$LOCAL_IP" ]]; then
+    echo "[ERROR] Cannot determine this computer's IP on the robot network."
+    echo "        Pass it explicitly with --local-ip."
     exit 1
+fi
+
+if ! ping -c 1 -W 2 "$ROBOT_IP" >/dev/null 2>&1; then
+    echo "[WARN] $ROBOT_IP did not answer ping; attempting startup anyway."
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "=== Stack robot reale (franka_ros2 + franka_hardware) ==="
-echo "Robot IP : $ROBOT_IP"
-echo ""
+echo "ROS 1 robot computer : $ROBOT_IP"
+echo "Local ROS 1 address : $LOCAL_IP"
+echo "ROS 1 controller    : /effort_joint_trajectory_controller"
+echo "ROS 2 domain        : 42"
+echo
+echo "The robot computer must already run roscore, publish /joint_states,"
+echo "and have effort_joint_trajectory_controller in the running state."
 
-# Verifica connettività base prima di avviare il container
-if ! ping -c 1 -W 2 "$ROBOT_IP" &>/dev/null; then
-    echo "[WARN] Impossibile raggiungere $ROBOT_IP — verificare la rete."
-    echo "       Continuo comunque (il ping potrebbe essere bloccato dal firewall)."
-fi
-
-echo "Prerequisiti da verificare prima di continuare:"
-echo "  1. FCI abilitata in Franka Desk (pulsante 'Activate FCI')"
-echo "  2. Robot non in stato di errore (LED blu fisso)"
-echo "  3. Nessun altro processo connesso via FCI (libfranka)"
-echo ""
-read -rp "Premi INVIO per avviare..."
-
-echo ""
-echo "[1/1] Avvio stack franka_ros2 nel container ros2..."
-echo "      (ros2_control_node + franka_gripper + MoveIt 2 move_group)"
-echo ""
-
+export ROBOT_IP LOCAL_IP RVIZ
 cd "$REPO_ROOT/docker"
-docker compose run --rm \
-    -e VLM_ROBOT=fr3 \
-    ros2 \
-    ros2 launch vlm_robot_planner_bringup real_robot.launch.py \
-        robot_ip:="$ROBOT_IP"
+
+# Use compose for both processes so Ctrl+C tears down the bridge and MoveIt
+# together. No process on this machine opens an FCI/libfranka connection.
+exec docker compose --profile real up --abort-on-container-exit \
+    ros1_gripper_adapter ros1_bridge  ros2_real
