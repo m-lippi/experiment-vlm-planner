@@ -107,11 +107,8 @@ _NAMED_CONFIGS = {
     "side_approach": [-0.52, 0.58, -0.62, -2.90, 2.03, 1.17, -2.42],
 }
 
-_GRIPPER_OPEN   = 0.04   # metres per finger (8 cm total opening)
-# Grip position: 0.020 m per finger = 4 cm total opening.
-# Covers Phase 2 objects (hammer handle ~4cm, cup ~5cm, cylinder ~4cm).
-# GazeboAttach handles the actual attachment regardless of exact closure.
-_GRIPPER_CLOSED = 0.020
+_GRIPPER_OPEN   = 0.08   # total distance between the two fingers [m]
+_GRIPPER_CLOSED = 0.02   # target separation used by the real pick/place test
 _GRIPPER_EFFORT = 20.0   # N — enough for lightweight objects
 
 # Top-down grasp orientation: 180° rotation around x → end-effector points down.
@@ -302,7 +299,7 @@ class ArmPrimitive:
         Uses threading.Event + callbacks so it is safe to call from any
         background thread without conflicting with the MultiThreadedExecutor.
         """
-        if not self._gripper_client.wait_for_server(timeout_sec=3.0):
+        if not self._gripper_client.wait_for_server(timeout_sec=5.0):
             self._node.get_logger().warn("ArmPrimitive: gripper action server not ready.")
             return False
 
@@ -310,26 +307,40 @@ class ArmPrimitive:
         goal.command.position   = position
         goal.command.max_effort = max_effort
 
-        done          = threading.Event()
-        result_holder: list = [None]
+        accepted = threading.Event()
+        completed = threading.Event()
+        holder = {"goal": None, "result": None}
 
         def _on_result(future):
-            result_holder[0] = future.result()
-            done.set()
+            holder["result"] = future.result()
+            completed.set()
 
         def _on_goal(future):
-            gh = future.result()
-            if gh is None or not gh.accepted:
+            holder["goal"] = future.result()
+            accepted.set()
+            if holder["goal"] is not None and holder["goal"].accepted:
+                holder["goal"].get_result_async().add_done_callback(_on_result)
+            else:
                 self._node.get_logger().warn("ArmPrimitive: gripper goal rejected.")
-                done.set()
-                return
-            gh.get_result_async().add_done_callback(_on_result)
+                completed.set()
 
         self._gripper_client.send_goal_async(goal).add_done_callback(_on_goal)
-        done.wait(timeout=10.0)
+        if (
+            not accepted.wait(5.0)
+            or holder["goal"] is None
+            or not holder["goal"].accepted
+        ):
+            return False
+        if not completed.wait(20.0):
+            self._node.get_logger().warn("ArmPrimitive: gripper command timed out.")
+            holder["goal"].cancel_goal_async()
+            return False
 
-        res     = result_holder[0]
-        success = res is not None and res.status == GoalStatus.STATUS_SUCCEEDED
+        response = holder["result"]
+        success = (
+            response is not None
+            and response.status == GoalStatus.STATUS_SUCCEEDED
+        )
         if not success:
             self._node.get_logger().warn("ArmPrimitive: gripper action did not succeed.")
         return success

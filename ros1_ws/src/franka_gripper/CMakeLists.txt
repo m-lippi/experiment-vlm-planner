@@ -15,6 +15,7 @@ add_action_files(
   FILES
     Grasp.action
     Homing.action
+    Move.action
 )
 
 generate_messages(

@@ -6,14 +6,16 @@ set -euo pipefail
 ROBOT_IP="192.168.131.1"
 LOCAL_IP=""
 RVIZ="true"
+PLAN_PREVIEW_DURATION="3.0"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --robot-ip) ROBOT_IP="$2"; shift 2 ;;
         --local-ip) LOCAL_IP="$2"; shift 2 ;;
         --no-rviz) RVIZ="false"; shift ;;
+        --preview-seconds) PLAN_PREVIEW_DURATION="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: $0 [--robot-ip IP] [--local-ip IP] [--no-rviz]"
+            echo "Usage: $0 [--robot-ip IP] [--local-ip IP] [--no-rviz] [--preview-seconds N]"
             echo "Default ROS 1 computer: 192.168.131.1"
             exit 0
             ;;
@@ -45,7 +47,7 @@ echo
 echo "The robot computer must already run roscore, publish /joint_states,"
 echo "and have effort_joint_trajectory_controller in the running state."
 
-export ROBOT_IP LOCAL_IP RVIZ
+export ROBOT_IP LOCAL_IP RVIZ PLAN_PREVIEW_DURATION
 cd "$REPO_ROOT/docker"
 
 # Use compose for both processes so Ctrl+C tears down the bridge and MoveIt

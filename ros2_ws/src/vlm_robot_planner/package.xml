@@ -17,6 +17,7 @@
   <depend>action_msgs</depend>
 
   <!-- Motion planning (moveit_py è incluso in moveit, non ha rosdep key separata) -->
+  <depend>moveit_msgs</depend>
   <depend>moveit_ros_planning_interface</depend>
 
   <!-- Robot control -->

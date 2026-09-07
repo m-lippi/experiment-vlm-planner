@@ -55,6 +55,11 @@ def generate_launch_description() -> LaunchDescription:
         default_value="true",
         description="Launch RViz2 for visualization",
     )
+    preview_arg = DeclareLaunchArgument(
+        "plan_preview_duration",
+        default_value="3.0",
+        description="Seconds to display a MoveIt plan in RViz before execution",
+    )
     world_arg = DeclareLaunchArgument(
         "world_name",
         default_value="tabletop",
@@ -232,7 +237,13 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     moveit_params,
-                    {"use_sim_time": True},
+                    {
+                        "use_sim_time": True,
+                        "plan_preview_duration": ParameterValue(
+                            LaunchConfiguration("plan_preview_duration"),
+                            value_type=float,
+                        ),
+                    },
                 ],
             )
         ],
@@ -240,6 +251,7 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription([
         rviz_arg,
+        preview_arg,
         world_arg,
         # Gazebo + robot
         gazebo,

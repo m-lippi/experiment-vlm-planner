@@ -103,6 +103,13 @@ bin/start_sim.sh --world kitchen
 bin/start_sim.sh --world office rviz:=true
 ```
 
+MoveIt trajectories are previewed in RViz for 3 seconds before execution. To
+change the preview interval:
+
+```bash
+bin/start_sim.sh rviz:=true plan_preview_duration:=6
+```
+
 Available worlds: `tabletop`, `workshop`, `office`, `kitchen`.
 
 ### Run a single task (open-loop)
@@ -344,6 +351,13 @@ bin/start_real.sh
 bin/start_real.sh --robot-ip 192.168.131.1 --local-ip 192.168.131.2
 ```
 
+MoveIt plans are displayed on `/display_planned_path` before execution. The
+default preview is 3 seconds; increase it when you want more inspection time:
+
+```bash
+bin/start_real.sh --preview-seconds 6
+```
+
 This script:
 
 1. Detects this computer's IP on the robot network and exports it as `ROS_IP`.
@@ -425,6 +439,33 @@ The sequence opens and closes the gripper at its current pose, lifts vertically,
 moves to the requested XY offset, descends to the original height, releases the
 object, and retreats. It defaults to 10% velocity and asks for confirmation
 before grasping.
+
+### Test every primitive on the real robot
+
+First validate all ROS 1/ROS 2 interfaces without sending commands:
+
+```bash
+bin/run_test_primitives.sh --check-only
+```
+
+The interactive full test covers `navigate_to`, gripper open/close, `look_at`,
+`tilt`, `pour`, `stir`, `cut`, `pick`, and `place`. It asks for confirmation
+before every physical step and uses the startup end-effector pose as a virtual
+free-space work point:
+
+```bash
+bin/run_test_primitives.sh
+```
+
+Run one primitive, or a selected subset, while debugging:
+
+```bash
+bin/run_test_primitives.sh --only gripper
+bin/run_test_primitives.sh --only pick --only place --place-y 0.10
+```
+
+Keep the workspace clear during the free-space motion tests. Insert a
+lightweight object only when prompted for the `pick` test.
 
 ### Environment variables for real robot
 

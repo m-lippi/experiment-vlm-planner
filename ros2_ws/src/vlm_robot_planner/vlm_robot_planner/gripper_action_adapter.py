@@ -89,16 +89,17 @@ class GripperActionAdapter(Node):
             "Gripper action adapter started"
         )
         self.get_logger().info(
-            "ROS 2 action: %s",
-            self.get_parameter("action_name").value,
+            f"ROS 2 action: {self.get_parameter('action_name').value}"
         )
         self.get_logger().info(
-            "Bridge command topic: %s [std_msgs/msg/Float64]",
-            self.get_parameter("command_topic").value,
+            "Bridge command topic: "
+            f"{self.get_parameter('command_topic').value} "
+            "[std_msgs/msg/Float64]"
         )
         self.get_logger().info(
-            "Result topic: %s [std_msgs/msg/Bool]",
-            self.get_parameter("result_topic").value,
+            "Result topic: "
+            f"{self.get_parameter('result_topic').value} "
+            "[std_msgs/msg/Bool]"
         )
 
     def _on_result(self, msg: Bool) -> None:
@@ -148,15 +149,13 @@ class GripperActionAdapter(Node):
             )
 
             self.get_logger().info(
-                "Gripper goal received: width=%.4f m",
-                width,
+                f"Gripper goal received: width={width:.4f} m"
             )
 
             # Basic safety check.
             if width < 0.0 or width > 0.08:
                 self.get_logger().error(
-                    "Rejecting invalid gripper width: %.4f m",
-                    width,
+                    f"Rejecting invalid gripper width: {width:.4f} m"
                 )
                 goal_handle.abort()
                 return result
@@ -175,8 +174,7 @@ class GripperActionAdapter(Node):
             self._command_pub.publish(msg)
 
             self.get_logger().info(
-                "Published Float64 gripper command: %.4f m",
-                width,
+                f"Published Float64 gripper command: {width:.4f} m"
             )
 
             deadline = time.monotonic() + self._timeout
@@ -246,7 +244,8 @@ def main() -> None:
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

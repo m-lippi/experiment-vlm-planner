@@ -15,12 +15,14 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction
+from launch.actions import DeclareLaunchArgument, TimerAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
+
 
 
 _CAM_CFG_PATH = (
@@ -40,6 +42,16 @@ if _CAM_CFG_PATH.exists():
 def generate_launch_description() -> LaunchDescription:
     rviz_arg = DeclareLaunchArgument(
         "rviz", default_value="true", description="Launch RViz2"
+    )
+    preview_arg = DeclareLaunchArgument(
+        "plan_preview_duration",
+        default_value="2.0",
+        description="Seconds to display a MoveIt plan in RViz before execution",
+    )
+    allowed_start_tolerance_arg = DeclareLaunchArgument(
+        "allowed_start_tolerance",
+        default_value="0.02",
+        description="Maximum joint error allowed when trajectory execution starts",
     )
     joint_state_topic_arg = DeclareLaunchArgument(
         "joint_state_topic",
@@ -138,6 +150,42 @@ def generate_launch_description() -> LaunchDescription:
             }
         ],
     )
+    # realsense_node = Node(
+    #     package="realsense2_camera",
+    #     executable="realsense2_camera_node",
+    #     namespace="overview_camera",
+    #     name="realsense2_camera",
+    #     parameters=[{
+    #         "enable_color": True,
+    #         "enable_depth": True,
+    #         "align_depth.enable": True,
+    #         "enable_gyro": False,
+    #         "enable_accel": False,
+    #         "enable_sync": True,
+    #     }],
+    #     output="screen",
+    # )
+
+    realsense_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("realsense2_camera"),
+                "examples/align_depth",
+                "rs_align_depth_launch.py",
+            )
+        ),
+        launch_arguments={
+            "camera_namespace": "overview_camera",
+            "camera_name": "overview_camera",
+            "enable_color": "true",
+            "enable_depth": "true",
+            "align_depth.enable": "true",
+            "enable_sync": "true",
+            "enable_gyro": "false",
+            "enable_accel": "false",
+        }.items(),
+    )
+
     gripper_adapter = Node(
         package="vlm_robot_planner",
         executable="gripper_action_adapter",
@@ -173,7 +221,15 @@ def generate_launch_description() -> LaunchDescription:
         package="moveit_ros_move_group",
         executable="move_group",
         output="screen",
-        parameters=[moveit_params],
+        parameters=[
+            moveit_params,
+            {
+                "trajectory_execution.allowed_start_tolerance": ParameterValue(
+                    LaunchConfiguration("allowed_start_tolerance"),
+                    value_type=float,
+                )
+            },
+        ],
         remappings=[("/joint_states", "/fr3_joint_states")],
     )
     rviz_path = os.path.join(bringup_share, "config", "moveit.rviz")
@@ -192,7 +248,16 @@ def generate_launch_description() -> LaunchDescription:
                 package="vlm_robot_planner",
                 executable="orchestrator",
                 output="screen",
-                parameters=[moveit_params, {"use_sim": False}],
+                parameters=[
+                    moveit_params,
+                    {
+                        "use_sim": False,
+                        "plan_preview_duration": ParameterValue(
+                            LaunchConfiguration("plan_preview_duration"),
+                            value_type=float,
+                        ),
+                    },
+                ],
                 additional_env={"VLM_ROBOT": "fr3"},
             )
         ],
@@ -201,12 +266,15 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
             rviz_arg,
+            preview_arg,
+            allowed_start_tolerance_arg,
             joint_state_topic_arg,
             command_topic_arg,
             *overview_args,
             robot_state_publisher,
             trajectory_adapter,
             gripper_adapter,
+            # realsense_launch,
             static_tf,
             static_tf_overview,
             move_group,

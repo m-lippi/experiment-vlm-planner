@@ -45,7 +45,7 @@ class TrajectoryTopicAdapter(Node):
         self.declare_parameter(
             "joint_names", [f"fr3_joint{i}" for i in range(1, 8)]
         )
-        self.declare_parameter("goal_tolerance", 0.01)
+        self.declare_parameter("goal_tolerance", 0.02)
         self.declare_parameter("connection_timeout", 10.0)
         self.declare_parameter("execution_timeout_margin", 5.0)
 

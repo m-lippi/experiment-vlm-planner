@@ -2,8 +2,10 @@
 MoveIt2 Python client — wraps the /move_group action server.
 
 MoveIt 2 communicates through its standard MoveGroup and ExecuteTrajectory
-actions. In simulation those end at ros2_control; on the real robot they end at
-the local FollowJointTrajectory-to-ROS-1 topic adapter.
+actions. MoveGroup plans without executing; the plan is published for RViz,
+held for a configurable preview interval, and then sent to ExecuteTrajectory.
+In simulation execution ends at ros2_control; on the real robot it ends at the
+local FollowJointTrajectory-to-ROS-1 topic adapter.
 
 Public interface (mirrors pymoveit2.MoveIt2):
   move_to_pose(position, quat_xyzw)
@@ -18,6 +20,7 @@ Requires MultiThreadedExecutor on the host node.
 
 from __future__ import annotations
 
+import math
 import threading
 from typing import List, Optional
 
@@ -27,6 +30,7 @@ from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import (
     BoundingVolume,
     Constraints,
+    DisplayTrajectory,
     JointConstraint,
     MotionPlanRequest,
     OrientationConstraint,
@@ -83,11 +87,22 @@ class MoveIt2Client:
             GetCartesianPath, "/compute_cartesian_path",
             callback_group=callback_group,
         )
+        self._display_pub = node.create_publisher(
+            DisplayTrajectory, "/display_planned_path", 10
+        )
+
+        parameter_name = "plan_preview_duration"
+        if not node.has_parameter(parameter_name):
+            node.declare_parameter(parameter_name, 3.0)
+        self.plan_preview_duration = max(
+            0.0, float(node.get_parameter(parameter_name).value)
+        )
 
         self._lock               = threading.Lock()
         self._done_event         = threading.Event()
         self._last_success       = False
         self._active_goal_handle = None
+        self._cancel_event: threading.Event | None = None
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -115,17 +130,51 @@ class MoveIt2Client:
         self._send_goal_async(self._build_joint_goal(joint_positions))
 
     def wait_until_executed(self, timeout: float = 60.0) -> bool:
-        signalled = self._done_event.wait(timeout=timeout)
+        # The preview is intentional idle time before controller execution and
+        # should not consume the caller's existing motion timeout budget.
+        effective_timeout = timeout + self.plan_preview_duration
+        signalled = self._done_event.wait(timeout=effective_timeout)
         if not signalled:
             self._node.get_logger().warn("MoveIt2Client: wait_until_executed timed out.")
-            gh = self._active_goal_handle
+            with self._lock:
+                cancel_event = self._cancel_event
+                gh = self._active_goal_handle
+            if cancel_event is not None:
+                # In particular, prevent a preview thread from executing after
+                # its caller has already timed out.
+                cancel_event.set()
             if gh is not None:
-                self._active_goal_handle = None
                 try:
                     gh.cancel_goal_async()
                 except Exception:
                     pass
         return self._last_success
+
+    def _begin_operation(self) -> threading.Event:
+        """Start one motion operation and invalidate any older callbacks."""
+        with self._lock:
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+            cancel_event = threading.Event()
+            self._cancel_event = cancel_event
+            self._active_goal_handle = None
+            self._done_event.clear()
+            self._last_success = False
+        return cancel_event
+
+    def _is_current(self, cancel_event: threading.Event) -> bool:
+        with self._lock:
+            return self._cancel_event is cancel_event
+
+    def _finish_operation(
+        self, cancel_event: threading.Event, success: bool
+    ) -> None:
+        with self._lock:
+            if self._cancel_event is not cancel_event:
+                return
+            self._active_goal_handle = None
+            self._last_success = bool(success)
+            self._done_event.set()
 
     # ── Goal builders ─────────────────────────────────────────────────────────
 
@@ -209,7 +258,9 @@ class MoveIt2Client:
     @staticmethod
     def _wrap_request(request: MotionPlanRequest) -> MoveGroup.Goal:
         opts                 = PlanningOptions()
-        opts.plan_only       = False   # move_group plans AND executes
+        # Planning and execution are intentionally separate. This gives RViz
+        # time to animate /display_planned_path before hardware starts moving.
+        opts.plan_only       = True
         opts.replan          = False
         opts.replan_attempts = 0
 
@@ -226,13 +277,11 @@ class MoveIt2Client:
         max_step:     float = 0.005,
         min_fraction: float = 0.90,
     ) -> None:
-        with self._lock:
-            self._done_event.clear()
-            self._last_success = False
+        cancel_event = self._begin_operation()
 
         threading.Thread(
             target=self._run_cartesian,
-            args=(waypoints, max_step, min_fraction),
+            args=(waypoints, max_step, min_fraction, cancel_event),
             daemon=True,
         ).start()
 
@@ -241,12 +290,13 @@ class MoveIt2Client:
         waypoints:    List[Pose],
         max_step:     float,
         min_fraction: float,
+        cancel_event: threading.Event,
     ) -> None:
         if not self._cartesian_client.wait_for_service(timeout_sec=5.0):
             self._node.get_logger().error(
                 "MoveIt2Client: /compute_cartesian_path not available."
             )
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
             return
 
         req                     = GetCartesianPath.Request()
@@ -269,7 +319,10 @@ class MoveIt2Client:
         self._cartesian_client.call_async(req).add_done_callback(_on_svc)
         if not svc_done.wait(timeout=15.0):
             self._node.get_logger().warn("MoveIt2Client: GetCartesianPath timed out.")
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
+            return
+
+        if cancel_event.is_set() or not self._is_current(cancel_event):
             return
 
         response = svc_result[0]
@@ -278,92 +331,196 @@ class MoveIt2Client:
             self._node.get_logger().warn(
                 f"MoveIt2Client: Cartesian path {fraction:.0%} (need ≥{min_fraction:.0%})."
             )
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
             return
 
+        self._apply_trajectory_scaling(response.solution)
         self._node.get_logger().info(
-            f"MoveIt2Client: Cartesian path {fraction:.0%} — executing."
+            f"MoveIt2Client: Cartesian path {fraction:.0%}, retimed to "
+            f"velocity={self.max_velocity:.0%}, "
+            f"acceleration={self.max_acceleration:.0%} — previewing."
         )
+        self._preview_then_execute(
+            response.start_state,
+            response.solution,
+            cancel_event,
+        )
+
+    def _apply_trajectory_scaling(self, trajectory) -> None:
+        """Conservatively enforce the configured limits on a Cartesian path.
+
+        ``GetCartesianPath`` in ROS 2 Humble has no velocity or acceleration
+        scaling fields. Its returned trajectory is therefore timed at the
+        robot-model limits, unlike a normal ``MotionPlanRequest``. Stretching
+        time uniformly makes the existing path obey both configured limits:
+        velocities scale with 1/time and accelerations with 1/time**2.
+        """
+        velocity_scale = min(1.0, max(float(self.max_velocity), 1e-6))
+        acceleration_scale = min(1.0, max(float(self.max_acceleration), 1e-6))
+        time_scale = max(
+            1.0 / velocity_scale,
+            1.0 / math.sqrt(acceleration_scale),
+        )
+
+        for point in trajectory.joint_trajectory.points:
+            total_nanoseconds = (
+                point.time_from_start.sec * 1_000_000_000
+                + point.time_from_start.nanosec
+            )
+            scaled_nanoseconds = math.ceil(total_nanoseconds * time_scale)
+            point.time_from_start.sec = scaled_nanoseconds // 1_000_000_000
+            point.time_from_start.nanosec = scaled_nanoseconds % 1_000_000_000
+            if point.velocities:
+                point.velocities = [value / time_scale for value in point.velocities]
+            if point.accelerations:
+                point.accelerations = [
+                    value / (time_scale * time_scale)
+                    for value in point.accelerations
+                ]
+
+    def _publish_preview(self, start_state, trajectory) -> None:
+        display = DisplayTrajectory()
+        display.trajectory_start = start_state
+        display.trajectory = [trajectory]
+        self._display_pub.publish(display)
+
+    def _preview_then_execute(
+        self, start_state, trajectory, cancel_event: threading.Event
+    ) -> None:
+        """Publish a trajectory, wait for RViz preview, then execute it."""
+        if cancel_event.is_set() or not self._is_current(cancel_event):
+            return
+
+        self._publish_preview(start_state, trajectory)
+        delay = self.plan_preview_duration
+        if delay > 0.0:
+            self._node.get_logger().info(
+                f"MoveIt2Client: displaying plan in RViz for {delay:.1f} s "
+                "before execution."
+            )
+            if cancel_event.wait(delay):
+                return
+
+        if not self._is_current(cancel_event):
+            return
 
         if not self._execute_client.wait_for_server(timeout_sec=5.0):
             self._node.get_logger().error(
                 "MoveIt2Client: /execute_trajectory not available."
             )
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
+            return
+
+        if cancel_event.is_set() or not self._is_current(cancel_event):
             return
 
         exec_goal            = ExecuteTrajectory.Goal()
-        exec_goal.trajectory = response.solution
+        exec_goal.trajectory = trajectory
+        self._node.get_logger().info("MoveIt2Client: preview complete — executing plan.")
         self._execute_client.send_goal_async(exec_goal).add_done_callback(
-            self._on_exec_goal
+            lambda future: self._on_exec_goal(future, cancel_event)
         )
 
-    def _on_exec_goal(self, future) -> None:
+    def _on_exec_goal(self, future, cancel_event: threading.Event) -> None:
         gh = future.result()
+        if cancel_event.is_set() or not self._is_current(cancel_event):
+            if gh is not None and gh.accepted:
+                gh.cancel_goal_async()
+            return
         if gh is None or not gh.accepted:
             self._node.get_logger().warn("MoveIt2Client: ExecuteTrajectory goal rejected.")
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
             return
-        self._active_goal_handle = gh
-        gh.get_result_async().add_done_callback(self._on_exec_result)
+        with self._lock:
+            if self._cancel_event is not cancel_event:
+                return
+            self._active_goal_handle = gh
+        gh.get_result_async().add_done_callback(
+            lambda result_future: self._on_exec_result(result_future, cancel_event)
+        )
 
-    def _on_exec_result(self, future) -> None:
-        self._active_goal_handle = None
+    def _on_exec_result(self, future, cancel_event: threading.Event) -> None:
+        if not self._is_current(cancel_event):
+            return
         response = future.result()
+        success = False
         if response is None:
             self._node.get_logger().warn("MoveIt2Client: ExecuteTrajectory null result.")
         else:
             code = response.result.error_code.val
-            self._last_success = (
+            success = (
                 response.status == GoalStatus.STATUS_SUCCEEDED and code == _SUCCESS
             )
-            if not self._last_success:
+            if not success:
                 self._node.get_logger().warn(
                     f"MoveIt2Client: ExecuteTrajectory failed — "
                     f"status={response.status}, code={code}"
                 )
-        self._done_event.set()
+        self._finish_operation(cancel_event, success)
 
     # ── Async dispatch ────────────────────────────────────────────────────────
 
     def _send_goal_async(self, goal: MoveGroup.Goal) -> None:
-        with self._lock:
-            self._done_event.clear()
-            self._last_success = False
+        cancel_event = self._begin_operation()
 
         if not self._client.wait_for_server(timeout_sec=10.0):
             self._node.get_logger().error(
                 "MoveIt2Client: /move_action not available (is move_group running?)."
             )
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
             return
 
-        self._client.send_goal_async(goal).add_done_callback(self._on_goal_response)
+        self._client.send_goal_async(goal).add_done_callback(
+            lambda future: self._on_goal_response(future, cancel_event)
+        )
 
-    def _on_goal_response(self, future) -> None:
+    def _on_goal_response(self, future, cancel_event: threading.Event) -> None:
         gh = future.result()
+        if cancel_event.is_set() or not self._is_current(cancel_event):
+            if gh is not None and gh.accepted:
+                gh.cancel_goal_async()
+            return
         if gh is None or not gh.accepted:
             self._node.get_logger().warn("MoveIt2Client: goal rejected by move_group.")
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
             return
-        self._active_goal_handle = gh
-        gh.get_result_async().add_done_callback(self._on_result)
+        with self._lock:
+            if self._cancel_event is not cancel_event:
+                return
+            self._active_goal_handle = gh
+        gh.get_result_async().add_done_callback(
+            lambda result_future: self._on_plan_result(
+                result_future, cancel_event
+            )
+        )
 
-    def _on_result(self, future) -> None:
-        self._active_goal_handle = None
+    def _on_plan_result(self, future, cancel_event: threading.Event) -> None:
+        if cancel_event.is_set() or not self._is_current(cancel_event):
+            return
+        with self._lock:
+            if self._cancel_event is cancel_event:
+                self._active_goal_handle = None
         response = future.result()
         if response is None:
             self._node.get_logger().warn("MoveIt2Client: null result from move_group.")
-            self._done_event.set()
+            self._finish_operation(cancel_event, False)
             return
 
         code = response.result.error_code.val
-        self._last_success = (
+        success = (
             response.status == GoalStatus.STATUS_SUCCEEDED and code == _SUCCESS
         )
-        if not self._last_success:
+        if not success:
             self._node.get_logger().warn(
-                f"MoveIt2Client: motion failed — "
+                f"MoveIt2Client: planning failed — "
                 f"status={response.status}, error_code={code}"
             )
-        self._done_event.set()
+            self._finish_operation(cancel_event, False)
+            return
+
+        self._node.get_logger().info("MoveIt2Client: planning succeeded.")
+        self._preview_then_execute(
+            response.result.trajectory_start,
+            response.result.planned_trajectory,
+            cancel_event,
+        )

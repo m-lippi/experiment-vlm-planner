@@ -57,6 +57,7 @@ RUN apt-get update \
     # cv_bridge for camera image conversion
     ros-humble-cv-bridge \
     ros-humble-image-transport \
+    ros-humble-realsense2-*\
     # Mesa software rendering — fixes libGL/libGLX version mismatch that causes
     # Gazebo/OGRE black screen after Docker image rebuild.
     # The rebuild updates libGLX_mesa (Oct 2024) but leaves libGL.so at Jan 2022,

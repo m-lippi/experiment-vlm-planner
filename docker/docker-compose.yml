@@ -59,9 +59,16 @@ services:
       - ../docker:/workspace/docker:ro
       - ../data:/workspace/data:rw
       - ../data/gazebo:/root/.gazebo:rw
+    
+    privileged: true
 
     devices:
       - /dev/dri:/dev/dri
+      - /dev/bus/usb:/dev/bus/usb
+      # - /dev/video0:/dev/video0
+      # - /dev/video1:/dev/video1
+      # - /dev/video2:/dev/video2
+      # - /dev/video3:/dev/video3
 
     stdin_open: true
     tty: true
@@ -88,6 +95,7 @@ services:
     command: >
       ros2 launch vlm_robot_planner_bringup real_robot.launch.py
       rviz:=${RVIZ:-true}
+      plan_preview_duration:=${PLAN_PREVIEW_DURATION:-3.0}
 
   ros1_bridge:
     profiles: ["real"]
@@ -122,5 +130,5 @@ services:
     command:
     - source /opt/ros/noetic/setup.bash &&
       source /opt/ros1_ws/devel/setup.bash &&
-      exec python3 /workspace/scripts/ros1_gripper_adapter.py
+      exec python3 -u /workspace/scripts/ros1_gripper_adapter.py
     restart: unless-stopped

@@ -3,11 +3,134 @@
 
 
 - per entrare in docker 
-	docker 
+	docker exec -it ros2_real bash 
 	
+-pre vedere docker attivi
+docker ps
+	
+	
+	find "$(ros2 pkg prefix --share realsense2_camera)"  -name "rs_align_depth_launch.py"
 Working 
 - camera from nuc /camera/color/image_raw
 
 	
-TO DO:  
-run camera da nuc -- dovrebbe essere visibile 
+TO TEST:  
+
+ 0 -- sync
+ 1-- test fixed grasp (prima in ros1 e poi tramite ros2)
+ Esito: ok (funziona sia in run_test_pick_place che in bin/run_test_primitives.sh --only gripper con il cubo)
+  
+ 2-- test real pick and place 
+ bin/run_test_pick_place.sh 
+ 
+ Esito: ok 
+ 
+ 3 --vedere se movit mostra traiettoria pianificata 
+ Esito: NON funzionante
+ 
+ bin/start_real.sh --preview-seconds 2
+After the specified interval, execution starts automatically. Set plan_preview_duration:=0 to disable the delay.
+ 
+ 
+ 4-- chiamare una primitiva con il nuovo setup
+ 
+ ESITO: look_at works
+ 
+ It covers:
+- navigate_to stub
+- Gripper open/close
+- look_at
+- tilt
+- pour
+- stir
+- cut
+- pick
+- place
+
+Start the real stack, then verify connectivity without motion:
+
+bin/start_real.sh
+bin/run_test_primitives.sh --check-only
+
+Run individual primitives first:
+
+bin/run_test_primitives.sh --only gripper
+bin/run_test_primitives.sh --only tilt
+bin/run_test_primitives.sh --only pick --only place
+Run the complete interactive sequence:
+bin/run_test_primitives.sh
+The runner defaults to 10% velocity, asks before every step, restores the initial arm configuration between independent tests, and uses free-space virtual targets for stirring and cutting. The pour primitive was also changed so it cannot override the runner?s lower safety speed.
+ 
+ 5-- test the camera 
+ 
+ 
+    "/wrist_camera/image_raw",
+    "/overview_camera/image_raw",
+ 
+ 
+ Prendere seriale: 
+
+source .venv/bin/activate
+python scripts/capture_and_plan.py --list
+```
+
+Example output:
+```
+[0] serial=242322071571  name=Intel RealSense D435I   ? overview (fixed stand)
+[1] serial=241122072695  name=Intel RealSense D435I   ? wrist (on end-effector)
+```
+
+The **overview** camera is the one physically mounted on the fixed stand above the table; the **wrist** camera is the one attached to the end-effector. Note the serials ? you will need them for the calibration step below and for `capture_and_plan.py`.
+
+### Overview camera calibration (one-time, run on host)
+
+The overview camera must be calibrated once after mounting. The calibration stores the camera pose relative to `panda_link0` in `data/overview_camera_setup.json`; `real_robot.launch.py` reads this file automatically on every subsequent launch.
+
+```bash
+source .venv/bin/activate
+python scripts/setup_overview_camera.py --serial <OVERVIEW_SERIAL>
+```
+ 
+ 
+ TO DO 
+ - remap di camera wrist e settaggio del link 
+ <launch>
+  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="camera" value="wrist_camera"/>
+  </include>
+</launch>
+
+Al momento in _capture cerca la trasformata: 
+lookup_transform(
+    "panda_link0",                 # target
+    "wrist_camera_optical_frame",  # source
+    Time(),
+)
+
+It is saved as cam_to_base in data/camera_pose.json.
+For the real FR3 setup, this lookup is probably failing or using stale data because it should instead resemble:
+lookup_transform(
+    "fr3_link0",
+    "camera_color_optical_frame",
+    Time(),
+)
+The actual camera frame must be verified from:
+ros2 topic echo /camera/color/image_raw/header --once
+Then test whether the complete TF chain exists:
+docker exec -it vlm_ros2_real bash
+source /opt/ros/humble/setup.bash
+ros2 run tf2_ros tf2_echo fr3_link0 camera_color_optical_frame
+
+-- launch di overview camera 
+Attualmenta la trasformata è letta dal file overview_camera_setup.json
+
+
+-- capire trasformata  "world", "fr3_link0" in real_robot.launc
+
+ - rimpiazzare setup camera con apriltag
+ 
+ 
+ 
+ 
+ NOTE: ora pubblica come overview_camera/overview_camera/color/image_raw
+ 

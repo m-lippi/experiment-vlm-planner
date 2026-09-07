@@ -12,6 +12,8 @@ from franka_gripper.msg import (
     HomingAction,
     HomingGoal,
     GraspEpsilon,
+    MoveAction,
+    MoveGoal,
 )
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64
@@ -28,10 +30,15 @@ class GripperAdapter:
             std_msgs/Float64
             desired grasp width [m]
 
-    This is converted into:
+    Closing commands are converted into:
 
         /franka_gripper/grasp
             franka_gripper/GraspAction
+
+    Opening commands are converted into:
+
+        /franka_gripper/move
+            franka_gripper/MoveAction
 
     Homing is exposed as a ROS 1 service:
 
@@ -55,6 +62,11 @@ class GripperAdapter:
             "/franka_gripper/homing",
         )
 
+        self._move_action_name = rospy.get_param(
+            "~move_action_name",
+            "/franka_gripper/move",
+        )
+
         self._finger_names = rospy.get_param(
             "~finger_joint_names",
             ["fr3_finger_joint1", "fr3_finger_joint2"],
@@ -70,16 +82,20 @@ class GripperAdapter:
         )
 
         self._epsilon_inner = float(
-            rospy.get_param("~epsilon_inner", 0.005)
+            rospy.get_param("~epsilon_inner", 0.05)
         )
 
         self._epsilon_outer = float(
-            rospy.get_param("~epsilon_outer", 0.005)
+            rospy.get_param("~epsilon_outer", 0.05)
         )
 
         # Maximum allowed command width.
         self._max_width = float(
             rospy.get_param("~max_width", 0.08)
+        )
+
+        self._action_timeout = float(
+            rospy.get_param("~action_timeout", 15.0)
         )
 
         # ------------------------------------------------------------
@@ -89,6 +105,11 @@ class GripperAdapter:
         self._grasp_client = actionlib.SimpleActionClient(
             self._grasp_action_name,
             GraspAction,
+        )
+
+        self._move_client = actionlib.SimpleActionClient(
+            self._move_action_name,
+            MoveAction,
         )
 
         # ------------------------------------------------------------
@@ -121,7 +142,11 @@ class GripperAdapter:
         )
 
         self._width = float(
-            rospy.get_param("~initial_width", 0.04)
+            # No measured gripper state is available on this bridge-facing
+            # interface.  Starting below the normal open command guarantees
+            # that the first 0.04 m request is sent through Franka's Move
+            # action instead of being misclassified as a Grasp action.
+            rospy.get_param("~initial_width", 0.0)
         )
 
         # ------------------------------------------------------------
@@ -130,6 +155,8 @@ class GripperAdapter:
 
         self._lock = threading.Lock()
         self._busy = False
+        self._command_id = 0
+        self._command_timer = None
 
         # ------------------------------------------------------------
         # Initial synthetic state
@@ -170,6 +197,11 @@ class GripperAdapter:
         rospy.loginfo(
             "  Grasp action: %s",
             self._grasp_action_name,
+        )
+
+        rospy.loginfo(
+            "  Move action: %s",
+            self._move_action_name,
         )
 
         rospy.loginfo(
@@ -239,55 +271,62 @@ class GripperAdapter:
         self._state_pub.publish(state)
 
     # ================================================================
-    # Grasp feedback
+    # Gripper action completion
     # ================================================================
 
-    def _on_grasp_feedback(self, feedback):
+    def _finish_command(self, command_id, operation, width, status, result):
+        """Complete one command and always release the busy guard.
+
+        Franka's GraspResult and MoveResult do not contain a ``width`` field.
+        The previous callback tried to read it and raised before clearing
+        ``_busy``, permanently wedging the adapter after its first command.
         """
-        Feedback from /franka_gripper/grasp.
-        """
-
-        self._publish_width(
-            feedback.width
-        )
-
-        rospy.loginfo(
-            "Grasp feedback: width=%.4f m",
-            feedback.width,
-        )
-
-    # ================================================================
-    # Grasp result
-    # ================================================================
-
-    def _on_grasp_done(self, status, result):
-        """
-        Called when the Franka grasp action finishes.
-        """
-
-        self._publish_width(
-            result.width
-        )
-
-        success = (
-            status == GoalStatus.SUCCEEDED
-            and bool(result.success)
-        )
-
-        rospy.loginfo(
-            "Grasp finished: status=%d "
-            "width=%.4f success=%s",
-            status,
-            result.width,
-            result.success,
-        )
-
-        self._result_pub.publish(
-            Bool(data=success)
-        )
 
         with self._lock:
+            if not self._busy or command_id != self._command_id:
+                return
             self._busy = False
+            timer = self._command_timer
+            self._command_timer = None
+
+        if timer is not None:
+            timer.shutdown()
+
+        action_success = bool(getattr(result, "success", False))
+        success = status == GoalStatus.SUCCEEDED and action_success
+        error = getattr(result, "error", "")
+
+        if success:
+            # These actions provide no measured-width feedback. Publish the
+            # accepted target as the best available synthetic joint state.
+            self._publish_width(width)
+
+        rospy.loginfo(
+            "%s finished: status=%d target_width=%.4f success=%s error=%s",
+            operation,
+            status,
+            width,
+            success,
+            error or "none",
+        )
+        self._result_pub.publish(Bool(data=success))
+
+    def _on_action_timeout(self, _event, command_id, operation, client):
+        """Cancel a lost action and permit later commands to proceed."""
+
+        with self._lock:
+            if not self._busy or command_id != self._command_id:
+                return
+            self._busy = False
+            self._command_timer = None
+
+        rospy.logerr(
+            "%s timed out after %.1f s; cancelling it",
+            operation,
+            self._action_timeout,
+        )
+        client.cancel_goal()
+        self._result_pub.publish(Bool(data=False))
 
     # ================================================================
     # Gripper command
@@ -354,20 +393,31 @@ class GripperAdapter:
                 return
 
             self._busy = True
+            self._command_id += 1
+            command_id = self._command_id
+
+        # Opening must use Franka's Move action. Grasp is only appropriate
+        # when the requested width closes the fingers around an object.
+        opening = width > self._width + 1e-6
+        operation = "Move" if opening else "Grasp"
+        client = self._move_client if opening else self._grasp_client
+        action_name = self._move_action_name if opening else self._grasp_action_name
 
         # ------------------------------------------------------------
-        # Wait for grasp action server
+        # Wait for the selected Franka action server
         # ------------------------------------------------------------
 
         rospy.loginfo(
-            "Waiting for Franka grasp action server..."
+            "Waiting for Franka %s action server...",
+            operation.lower(),
         )
 
-        if not self._grasp_client.wait_for_server(
+        if not client.wait_for_server(
             rospy.Duration(5.0)
         ):
             rospy.logerr(
-                "Franka grasp action server is unavailable"
+                "Franka action server %s is unavailable",
+                action_name,
             )
 
             self._result_pub.publish(
@@ -380,36 +430,53 @@ class GripperAdapter:
             return
 
         # ------------------------------------------------------------
-        # Construct GraspGoal
+        # Construct the action goal
         # ------------------------------------------------------------
 
-        goal = GraspGoal()
+        if opening:
+            goal = MoveGoal(width=width, speed=self._speed)
+            rospy.loginfo(
+                "Sending move goal: width=%.4f m, speed=%.4f m/s",
+                goal.width,
+                goal.speed,
+            )
+        else:
+            goal = GraspGoal()
+            goal.width = width
+            goal.speed = self._speed
+            goal.force = self._force
+            goal.epsilon = GraspEpsilon(
+                inner=self._epsilon_inner,
+                outer=self._epsilon_outer,
+            )
+            rospy.loginfo(
+                "Sending grasp goal: width=%.4f m, speed=%.4f m/s, "
+                "force=%.2f N, epsilon=(%.4f, %.4f)",
+                goal.width,
+                goal.speed,
+                goal.force,
+                goal.epsilon.inner,
+                goal.epsilon.outer,
+            )
 
-        goal.width = width
-        goal.speed = self._speed
-        goal.force = self._force
-
-        goal.epsilon = GraspEpsilon(
-            inner=self._epsilon_inner,
-            outer=self._epsilon_outer,
-        )
-
-        rospy.loginfo(
-            "Sending grasp goal: "
-            "width=%.4f m, speed=%.4f m/s, "
-            "force=%.2f N, epsilon=(%.4f, %.4f)",
-            goal.width,
-            goal.speed,
-            goal.force,
-            goal.epsilon.inner,
-            goal.epsilon.outer,
-        )
-
-        self._grasp_client.send_goal(
+        client.send_goal(
             goal,
-            done_cb=self._on_grasp_done,
-            feedback_cb=self._on_grasp_feedback,
+            done_cb=lambda status, result: self._finish_command(
+                command_id, operation, width, status, result
+            ),
         )
+        timer = rospy.Timer(
+            rospy.Duration(self._action_timeout),
+            lambda event: self._on_action_timeout(
+                event, command_id, operation, client
+            ),
+            oneshot=True,
+        )
+        with self._lock:
+            if self._busy and command_id == self._command_id:
+                self._command_timer = timer
+            else:
+                timer.shutdown()
 
     # ================================================================
     # Homing service

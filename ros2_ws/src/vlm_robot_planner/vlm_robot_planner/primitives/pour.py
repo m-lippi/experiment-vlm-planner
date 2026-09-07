@@ -53,8 +53,10 @@ class PourPrimitive(ArmPrimitive):
 
         _saved_vel = self._moveit2.max_velocity
         _saved_acc = self._moveit2.max_acceleration
-        self._moveit2.max_velocity     = _POUR_VEL
-        self._moveit2.max_acceleration = _POUR_VEL
+        # Never raise a caller-imposed safety limit. The real-robot primitive
+        # test configures 10% motion, while simulation normally uses 30%.
+        self._moveit2.max_velocity = min(_saved_vel, _POUR_VEL)
+        self._moveit2.max_acceleration = min(_saved_acc, _POUR_VEL)
 
         try:
             # ── 1. Optional: carry can above target ───────────────────────────
