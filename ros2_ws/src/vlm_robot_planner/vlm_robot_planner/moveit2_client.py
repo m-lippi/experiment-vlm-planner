@@ -328,8 +328,10 @@ class MoveIt2Client:
         response = svc_result[0]
         fraction = response.fraction if response else 0.0
         if response is None or fraction < min_fraction:
+            error_code = response.error_code.val if response is not None else "none"
             self._node.get_logger().warn(
-                f"MoveIt2Client: Cartesian path {fraction:.0%} (need ≥{min_fraction:.0%})."
+                f"MoveIt2Client: Cartesian path {fraction:.0%} "
+                f"(need ≥{min_fraction:.0%}, error_code={error_code})."
             )
             self._finish_operation(cancel_event, False)
             return

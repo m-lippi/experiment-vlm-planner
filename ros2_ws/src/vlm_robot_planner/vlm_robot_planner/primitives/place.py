@@ -31,7 +31,7 @@ from vlm_robot_planner.primitives.base import ArmPrimitive, _TOP_DOWN_QUAT
 #   → 2 cm above shelf top ✓
 #   ACO bottom at 0.23−0.13−0.07 = 0.03 m > table top 0.00 m ✓
 # Cup falls ~2 cm onto shelf after Boeing detach.
-_RELEASE_HEIGHT_M  = 0.22
+_RELEASE_HEIGHT_M  = 0.03 #0.22
 # Approach height above the release pose (pre-place clearance)
 _APPROACH_HEIGHT_M = 0.15
 
@@ -83,6 +83,12 @@ class PlacePrimitive(ArmPrimitive):
         place_pose = self._build_release_pose(pose_data)
         pre_place  = self._make_pre_grasp_pose(place_pose, lift_m=_APPROACH_HEIGHT_M)
 
+        print("---- Place pose: ----")
+        print(place_pose)
+
+        print("---- Pre place: ----")
+        print(pre_place)
+
         # ── 1. Move above target — Cartesian approach (OMPL fallback) ────
         self._log(f"  → pre-place (z={pre_place.position.z:.3f})")
         if not self.move_to_pose_cartesian(pre_place):
@@ -120,9 +126,17 @@ class PlacePrimitive(ArmPrimitive):
         # Go through "safe_retreat" first (arm high above table) to avoid
         # PILZ PTP paths that could dip near table-level objects.
         # Falls back to direct "ready" if safe_retreat is unreachable.
+
+        self._log("  → safe retreat")
         if not self.move_to_named("safe_retreat"):
             self._log("safe_retreat unreachable — returning directly to ready")
+
+
+        self._log("  → ready configuration")
         self.move_to_named("ready")
+
+
+        self._log("  FINE RELEASE")
 
         self._log(f"place('{location_name}'): SUCCESS")
         return True

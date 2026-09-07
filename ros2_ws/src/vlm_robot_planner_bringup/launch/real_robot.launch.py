@@ -45,7 +45,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     preview_arg = DeclareLaunchArgument(
         "plan_preview_duration",
-        default_value="2.0",
+        default_value="0.0",
         description="Seconds to display a MoveIt plan in RViz before execution",
     )
     allowed_start_tolerance_arg = DeclareLaunchArgument(
@@ -150,41 +150,57 @@ def generate_launch_description() -> LaunchDescription:
             }
         ],
     )
-    # realsense_node = Node(
-    #     package="realsense2_camera",
-    #     executable="realsense2_camera_node",
-    #     namespace="overview_camera",
-    #     name="realsense2_camera",
-    #     parameters=[{
-    #         "enable_color": True,
-    #         "enable_depth": True,
-    #         "align_depth.enable": True,
-    #         "enable_gyro": False,
-    #         "enable_accel": False,
-    #         "enable_sync": True,
-    #     }],
-    #     output="screen",
-    # )
+    realsense_node = Node(
+        package="realsense2_camera",
+        executable="realsense2_camera_node",
+        namespace="overview_camera",
+        name="overview_camera",
+        parameters=[{
+            "enable_color": True,
+            "enable_depth": True,
+            "align_depth.enable": True,
+            "enable_gyro": False,
+            "enable_accel": False,
+            "enable_sync": True,
+            "enable_infra1": False,
+            "enable_infra2": False,
 
-    realsense_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory("realsense2_camera"),
-                "examples/align_depth",
-                "rs_align_depth_launch.py",
-            )
-        ),
-        launch_arguments={
-            "camera_namespace": "overview_camera",
-            "camera_name": "overview_camera",
-            "enable_color": "true",
-            "enable_depth": "true",
-            "align_depth.enable": "true",
-            "enable_sync": "true",
-            "enable_gyro": "false",
-            "enable_accel": "false",
-        }.items(),
+            "overview_camera.color.image_raw.enable_pub_plugins": [
+                "image_transport/raw",
+            ],
+
+            "overview_camera.depth.image_rect_raw.enable_pub_plugins": [
+                "image_transport/raw",
+            ],
+
+            "overview_camera.aligned_depth_to_color.image_raw.enable_pub_plugins": [
+                "image_transport/raw",
+            ],
+        }],
+        output="screen",
     )
+
+    # realsense_launch = IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource(
+    #         os.path.join(
+    #             get_package_share_directory("realsense2_camera"),
+    #             "examples/align_depth",
+    #             "rs_align_depth_launch.py",
+    #         )
+    #     ),
+    #     launch_arguments={
+    #         "camera_namespace": "overview_camera",
+    #         "camera_name": "overview_camera",
+    #         "enable_color": "true",
+    #         "enable_depth": "true",
+    #         "align_depth.enable": "true",
+    #         "enable_sync": "true",
+    #         "enable_gyro": "false",
+    #         "enable_accel": "false",
+    #         "overview_camera.color.image_raw.enable_pub_plugins":
+    #             "['image_transport/raw']",
+    #     }.items(),
+    # )
 
     gripper_adapter = Node(
         package="vlm_robot_planner",
@@ -274,7 +290,7 @@ def generate_launch_description() -> LaunchDescription:
             robot_state_publisher,
             trajectory_adapter,
             gripper_adapter,
-            # realsense_launch,
+            realsense_node,
             static_tf,
             static_tf_overview,
             move_group,

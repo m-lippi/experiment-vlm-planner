@@ -7,11 +7,10 @@
 	
 -pre vedere docker attivi
 docker ps
-	
-	
-	find "$(ros2 pkg prefix --share realsense2_camera)"  -name "rs_align_depth_launch.py"
-Working 
-- camera from nuc /camera/color/image_raw
+
+- tf read 
+ros2 run  tf2_ros tf2_echo fr3_link0 fr3_hand
+
 
 	
 TO TEST:  
@@ -34,8 +33,13 @@ After the specified interval, execution starts automatically. Set plan_preview_d
  
  4-- chiamare una primitiva con il nuovo setup
  
- ESITO: look_at works
+ ESITO: look_at works - pick works (grasp pose è 5cm sopra oggetto e pre grasp è 15 cm sopra grasp) - place works (place point è +3cm rispetto a oggetto, pre place +15 cm rispetto a place)
  
+ 
+ sed -n '1,260p' \
+$(ros2 pkg prefix realsense2_camera)/share/realsense2_camera/examples/align_depth/rs_align_depth_launch.py
+
+ Le primitive lavorano con le terne fr3_link0 fr3_hand
  It covers:
 - navigate_to stub
 - Gripper open/close
@@ -134,3 +138,6 @@ Attualmenta la trasformata è letta dal file overview_camera_setup.json
  
  NOTE: ora pubblica come overview_camera/overview_camera/color/image_raw
  
+ 
+ 
+

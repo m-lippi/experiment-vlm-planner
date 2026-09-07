@@ -112,7 +112,9 @@ _GRIPPER_CLOSED = 0.02   # target separation used by the real pick/place test
 _GRIPPER_EFFORT = 20.0   # N — enough for lightweight objects
 
 # Top-down grasp orientation: 180° rotation around x → end-effector points down.
-_TOP_DOWN_QUAT = Quaternion(x=1.0, y=0.0, z=0.0, w=0.0)
+# _TOP_DOWN_QUAT = Quaternion(x=1.0, y=0.0, z=0.0, w=0.0)
+_TOP_DOWN_QUAT = Quaternion(x=0.996, y=0.014, z=0.086, w=-0.015)
+
 
 
 # ── W5: AttachedCollisionObject parameters ────────────────────────────────────
@@ -438,21 +440,36 @@ class ArmPrimitive:
 
     # ── Utility ───────────────────────────────────────────────────────────────
 
-    def _get_current_eef_pos(self, timeout_sec: float = 1.0) -> list | None:
-        """Return current EEF position [x, y, z] in BASE_FRAME via TF lookup."""
+    def _get_current_eef_pose(self, timeout_sec: float = 1.0) -> Pose | None:
+        """Return the current EEF pose in ``BASE_FRAME`` via TF."""
         try:
-            import rclpy.time
             import rclpy.duration
-            tf = self._tf_buffer.lookup_transform(
-                BASE_FRAME, EEF_LINK,
+            import rclpy.time
+
+            transform = self._tf_buffer.lookup_transform(
+                BASE_FRAME,
+                EEF_LINK,
                 rclpy.time.Time(),
                 timeout=rclpy.duration.Duration(seconds=timeout_sec),
-            )
-            t = tf.transform.translation
-            return [t.x, t.y, t.z]
+            ).transform
+            pose = Pose()
+            pose.position.x = transform.translation.x
+            pose.position.y = transform.translation.y
+            pose.position.z = transform.translation.z
+            pose.orientation = transform.rotation
+            return pose
         except Exception as exc:
-            self._node.get_logger().warn(f"_get_current_eef_pos: TF lookup failed: {exc}")
+            self._node.get_logger().warn(
+                f"_get_current_eef_pose: TF lookup failed: {exc}"
+            )
             return None
+
+    def _get_current_eef_pos(self, timeout_sec: float = 1.0) -> list | None:
+        """Return current EEF position [x, y, z] in BASE_FRAME via TF lookup."""
+        pose = self._get_current_eef_pose(timeout_sec=timeout_sec)
+        if pose is None:
+            return None
+        return [pose.position.x, pose.position.y, pose.position.z]
 
     def _make_pre_grasp_pose(self, grasp_pose: Pose, lift_m: float = 0.12) -> Pose:
         """Return a pose `lift_m` above the grasp pose (pre-grasp approach)."""

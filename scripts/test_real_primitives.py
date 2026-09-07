@@ -218,13 +218,20 @@ def run(args: argparse.Namespace) -> int:
 
         # Pick's top-down grasp pose is object.z + 0.15. This makes the grasp
         # pose equal to the EEF translation captured above.
-        object_point = Point(x=eef.x, y=eef.y, z=eef.z - 0.15)
+        # [0.411, 0.054, 0.515]
+
+        # object_point = Point(x=eef.x, y=eef.y, z=eef.z - 0.15)
+
+        
+        #NOTA: su z sottraggo 0.05 dato che grasp è +0.05 rispetto alla posizione dell'oggetto
+        object_point = Point(x=0.427, y=0.055, z=0.497-0.05)
         # Place's release pose is target.z + 0.22.
-        place_point = Point(
-            x=eef.x + args.place_x,
-            y=eef.y + args.place_y,
-            z=eef.z - 0.22,
-        )
+        # place_point = Point(
+        #     x=eef.x + args.place_x,
+        #     y=eef.y + args.place_y,
+        #     z=eef.z - 0.1,
+        # )
+        place_point = Point(x=object_point.x + args.place_x, y=object_point.y + args.place_y, z=0.497)
         # Stir and cut are exercised in free space around the startup EEF,
         # without a tool or physical surface.
         work_point = Point(x=eef.x, y=eef.y, z=eef.z)
@@ -250,6 +257,22 @@ def run(args: argparse.Namespace) -> int:
             if not node.pick.close_gripper():
                 return False
             return node.pick.open_gripper()
+
+        def test_prepositioned_pick() -> bool:
+            def confirm_object_ready() -> bool:
+                if args.no_confirm:
+                    return True
+                input(
+                    "Insert/verify the object between the fingers, then press "
+                    "ENTER to grasp: "
+                )
+                return True
+
+            return node.pick.execute_prepositioned(
+                "primitive_test_object",
+                lift_m=args.pick_lift,
+                before_grasp=confirm_object_ready,
+            )
 
         actions: dict[str, tuple[str, Callable[[], bool]]] = {
             "navigate_to": (
@@ -294,6 +317,12 @@ def run(args: argparse.Namespace) -> int:
                     lambda: node.cut.execute("virtual_object", pose_data(work_point))
                 ),
             ),
+            # "pick": (
+            #     "Place a LIGHTWEIGHT object between the fingers at the startup EEF pose. "
+            #     f"PickPrimitive grasps without repositioning, then lifts "
+            #     f"{args.pick_lift:.3f} m vertically.",
+            #     test_prepositioned_pick,
+            # ),
             "pick": (
                 "Place a LIGHTWEIGHT object between the fingers at the startup EEF pose. "
                 "The test opens, approaches, grasps, attaches it in MoveIt, and retreats.",
@@ -353,6 +382,7 @@ def main() -> None:
     parser.add_argument("--place-x", type=float, default=0.0)
     parser.add_argument("--place-y", type=float, default=0.10)
     parser.add_argument("--object-height", type=float, default=0.08)
+    parser.add_argument("--pick-lift", type=float, default=0.05)
     parser.add_argument("--tilt-angle", type=float, default=15.0)
     parser.add_argument("--continue-on-failure", action="store_true")
     parser.add_argument("--no-confirm", action="store_true")
@@ -364,6 +394,8 @@ def main() -> None:
         parser.error("place offsets are limited to +/-0.20 m")
     if not 0.04 <= args.object_height <= 0.25:
         parser.error("--object-height must be between 0.04 and 0.25 m")
+    if not 0.02 <= args.pick_lift <= 0.15:
+        parser.error("--pick-lift must be between 0.02 and 0.15 m")
     if not 1.0 <= abs(args.tilt_angle) <= 30.0:
         parser.error("absolute --tilt-angle must be between 1 and 30 degrees")
     sys.exit(run(args))

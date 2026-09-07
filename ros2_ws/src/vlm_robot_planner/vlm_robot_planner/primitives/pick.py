@@ -20,6 +20,7 @@ Side grasp geometry:
 
 from __future__ import annotations
 
+
 from geometry_msgs.msg import Pose, Quaternion
 from rclpy.node import Node
 
@@ -34,7 +35,7 @@ _APPROACH_LATERAL_M  = 0.15   # lateral clearance before grasp for side
 # In sim: detected_z = oracle object centre → finger tips ~1.5 cm above centre.
 # On real robot (Phase 2+): detected_z from RealSense depth → same formula applies.
 # finger_tips = detected_z + _GRASP_OFFSET_Z_M - 0.133
-_GRASP_OFFSET_Z_M = 0.15
+_GRASP_OFFSET_Z_M = 0.05 # 0.15
 
 # Side grasp: Ry(90°) × Rz(180°) body rotation.
 # EEF Z = [1,0,0] (world +X) — gripper approaches from behind along +X, unchanged.
@@ -138,6 +139,12 @@ class PickPrimitive(ArmPrimitive):
             return False
 
         # ── 2. Pre-grasp ───────────────────────────────────────────────────
+        # self._log("pregrasp: ")
+        print('--------')
+        print('Pre grasp: ')
+        print(pre_grasp)
+        print('Grasp pose: ')
+        print(grasp_pose)
         if grasp_mode == "side":
             q = pre_grasp.orientation
             self._log(
@@ -148,6 +155,8 @@ class PickPrimitive(ArmPrimitive):
             )
         else:
             self._log(f"  → pre-grasp above object (z={pre_grasp.position.z:.3f})")
+        
+        
         if not self.move_to_pose_cartesian(pre_grasp):
             self._log("pre-grasp planning failed — aborting pick")
             return False
@@ -171,6 +180,7 @@ class PickPrimitive(ArmPrimitive):
             )
         else:
             self._log(f"  → descend to grasp (z={grasp_pose.position.z:.3f})")
+        
         if not self.move_to_pose_cartesian(grasp_pose):
             self._log("grasp approach failed — aborting pick")
             return False
@@ -180,6 +190,8 @@ class PickPrimitive(ArmPrimitive):
         # ── 4. Close gripper ───────────────────────────────────────────────
         if not self.close_gripper():
             self._log("close_gripper failed — object may have slipped")
+
+        
 
         # ── 4b. Notify MoveIt2 ─────────────────────────────────────────────
         self.attach_object(object_name, support_surface=support_surface)
@@ -194,7 +206,8 @@ class PickPrimitive(ArmPrimitive):
                 )
             else:
                 self._attach.attach(object_name)   # top_down: defaults (0.13, 0.0)
-
+        
+    
         # ── 5. Retreat (Cartesian straight line) ───────────────────────────
         # Use computeCartesianPath so the EEF moves in a geometrically straight
         # line. move_to_pose_linear (PILZ PTP) interpolates in joint space and
@@ -275,4 +288,3 @@ class PickPrimitive(ArmPrimitive):
     def _make_side_retreat_pose(self, grasp_pose: Pose) -> Pose:
         """Retreat after side grasp: reverse along approach axis (same as pre-grasp)."""
         return self._make_side_pre_grasp_pose(grasp_pose)
-
