@@ -18,6 +18,7 @@
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TASK="${1:?Uso: $0 \"descrizione task\"}"
+shift
 MAX_STEPS=10   # safety limit
 
 # Aspetta orchestratore
@@ -41,4 +42,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # Chiama lo script Python del loop
-python3 "$REPO_ROOT/scripts/run_loop_host.py" --task "$TASK" --max-steps "$MAX_STEPS"
+python3 "$REPO_ROOT/scripts/run_loop_host.py" \
+    --task "$TASK" \
+    --max-steps "$MAX_STEPS" \
+    "$@"

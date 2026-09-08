@@ -16,10 +16,14 @@ from __future__ import annotations
 import math
 
 from rclpy.node import Node
-from vlm_robot_planner.primitives.base import ArmPrimitive
+from geometry_msgs.msg import Pose, Quaternion
+from vlm_robot_planner.primitives.base import ArmPrimitive, _TOP_DOWN_QUAT
 
 _TABLE_VIEW_JOINTS = [0.0, -0.70, 0.0, -2.10, 0.0, 1.40, 0.7854]
 _J0_MAX = 1.30   # ±75° clamp
+
+
+_APPROACH_HEIGHT_M   = 0.25   # vertical clearance above object
 
 
 class LookAtPrimitive(ArmPrimitive):
@@ -36,27 +40,45 @@ class LookAtPrimitive(ArmPrimitive):
             self._log(f"look_at('{target_name}'): no pose — scan pose fallback")
             return self.move_to_named("scan")
 
+
+        
         pos = pose_data["position"]
-        j0  = math.atan2(pos.y, pos.x)
-        j0  = max(-_J0_MAX, min(_J0_MAX, j0))
+        obs = Pose()
+        obs.position.x = pos.x; obs.position.y = pos.y
+        obs.position.z = pos.z + _APPROACH_HEIGHT_M
+        obs.orientation = _TOP_DOWN_QUAT
+        
 
-        joints    = list(_TABLE_VIEW_JOINTS)
-        joints[0] = j0
+        self._log(f"look_at('{target_name}'): DINO pose "
+            f"({pos.x:.3f},{pos.y:.3f},{pos.z:.3f})")
 
-        self._log(
-            f"look_at('{target_name}'): DINO pose "
-            f"({pos.x:.3f},{pos.y:.3f}) → j0={math.degrees(j0):.1f}°"
-        )
 
-        self._moveit2.move_to_configuration(joints)
-        ok = self._moveit2.wait_until_executed(timeout=15.0)
-        if not ok:
-            self._log(f"  → j0 rotation failed, fallback scan pose")
-            ok = self.move_to_named("scan")
+        if not self.move_to_pose_cartesian(obs):
+            self._log("look at approach failed — aborting look at")
+            return False
+        return True
+        
+        
+        # j0  = math.atan2(pos.y, pos.x)
+        # j0  = max(-_J0_MAX, min(_J0_MAX, j0))
 
-        if ok:
-            self._log(f"look_at('{target_name}'): camera aimed at target area")
-        return ok
+        # joints    = list(_TABLE_VIEW_JOINTS)
+        # joints[0] = j0
+
+        # self._log(
+        #     f"look_at('{target_name}'): DINO pose "
+        #     f"({pos.x:.3f},{pos.y:.3f}) → j0={math.degrees(j0):.1f}°"
+        # )
+
+        # self._moveit2.move_to_configuration(joints)
+        # ok = self._moveit2.wait_until_executed(timeout=15.0)
+        # if not ok:
+        #     self._log(f"  → j0 rotation failed, fallback scan pose")
+        #     ok = self.move_to_named("scan")
+
+        # if ok:
+        #     self._log(f"look_at('{target_name}'): camera aimed at target area")
+        # return ok
 
         # ── Phase 4: move directly above object (RealSense depth required) ──
         # obs = Pose()

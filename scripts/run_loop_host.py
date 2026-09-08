@@ -23,9 +23,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -68,6 +70,8 @@ def _pre_scan(args) -> bool:
 
 def _capture(args) -> Path | None:
     """Capture image from wrist camera."""
+    if getattr(args, "real_ros2", False):
+        return _capture_real_ros2(args)
     scene_path = _REPO_ROOT / "data" / "scene.png"
     bash_cmd = (
         "source /opt/ros/humble/setup.bash && "
@@ -83,6 +87,55 @@ def _capture(args) -> Path | None:
     for line in output.splitlines():
         print(f"       {line}")
     return scene_path
+
+
+def _capture_real_ros2(args) -> Path | None:
+    """Capture aligned RGB-D topics and map them to the loop's data contract."""
+    data_dir = _REPO_ROOT / "data"
+    capture_dir = data_dir / "_loop_ros2_capture"
+    container_dir = "/workspace/data/_loop_ros2_capture"
+    command = (
+        "source /opt/ros/humble/setup.bash && "
+        "source /workspace/ros2_ws/install/setup.bash && "
+        "python3 /workspace/scripts/_capture_ros2_cameras.py "
+        f"--output-dir {container_dir} --timeout {args.capture_timeout} "
+        "--include-wrist "
+        f"--overview-image-topic {shlex.quote(args.overview_image_topic)} "
+        f"--overview-depth-topic {shlex.quote(args.overview_depth_topic)} "
+        f"--overview-info-topic {shlex.quote(args.overview_info_topic)} "
+        f"--wrist-image-topic {shlex.quote(args.wrist_image_topic)} "
+        f"--wrist-depth-topic {shlex.quote(args.wrist_depth_topic)} "
+        f"--wrist-info-topic {shlex.quote(args.wrist_info_topic)}"
+    )
+    result = _run_in_container(args, command, timeout=int(args.capture_timeout) + 8)
+    for line in result.stdout.decode().strip().splitlines():
+        print(f"       {line}")
+    if result.returncode != 0:
+        print(f"[FAIL] ROS 2 RGB-D capture: {result.stderr.decode().strip()}")
+        return None
+
+    try:
+        with (capture_dir / "capture_manifest.json").open(encoding="utf-8") as stream:
+            manifest = json.load(stream)
+
+        wrist = manifest["cameras"].get("wrist", {})
+        if wrist.get("available") and wrist.get("pose_available"):
+            primary_image = capture_dir / "wrist.png"
+            primary_label = "wrist"
+        else:
+            # The closed loop can still operate from the fixed calibrated view.
+            primary_image = capture_dir / "overview.png"
+            primary_label = "overview fallback"
+        # Keep all ROS captures run-local. Files created in the bind mount may
+        # be owned by the container user, and calibrated files are immutable
+        # inputs rather than capture outputs.
+        args.ros2_capture_dir = capture_dir
+        args.ros2_primary_camera = primary_label
+        print(f"[OK]   ROS 2 capture ready (primary: {primary_label})")
+        return primary_image
+    except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        print(f"[FAIL] Invalid ROS 2 capture output: {exc}")
+        return None
 
 
 def _get_gazebo_models(args) -> dict:
@@ -166,7 +219,7 @@ def _get_scene_objects(world_name: str) -> list[str]:
         return []
 
 
-def _get_overview_cam_data(world_name: str = "office"):
+def _get_overview_cam_data(world_name: str = "office", real_ros2: bool = False):
     """
     Compute K and cam_to_base for the OVERVIEW camera.
     Reads pose from the world SDF file — update the world file to recalibrate.
@@ -175,6 +228,20 @@ def _get_overview_cam_data(world_name: str = "office"):
     """
     try:
         import numpy as np, math
+
+        if real_ros2:
+            info_path = _REPO_ROOT / "data" / "overview_camera_info.json"
+            pose_path = _REPO_ROOT / "data" / "overview_camera_pose.json"
+            with info_path.open(encoding="utf-8") as stream:
+                K = np.asarray(json.load(stream)["K"], dtype=float)
+            with pose_path.open(encoding="utf-8") as stream:
+                cam_to_base = np.asarray(
+                    json.load(stream)["cam_to_base"], dtype=float
+                )
+            if K.shape != (3, 3) or cam_to_base.shape != (4, 4):
+                raise ValueError("invalid overview calibration matrix shape")
+            print("[INFO] Overview calibration loaded from AprilTag output files")
+            return K, cam_to_base
 
         # ── Read pose from world file ─────────────────────────────────────────
         pose = _read_overview_pose_from_world(world_name)
@@ -325,17 +392,61 @@ def _publish_perception_pose(
     height_m: estimated object height in metres (from _estimate_object_height).
               Encoded in orientation.z; None → 0.0 → orchestrator uses fallback.
     """
+    if not args.execute:
+        return True
+
     height_arg = f" --height_m {height_m:.4f}" if height_m is not None else ""
     bash_cmd = (
         "source /opt/ros/humble/setup.bash && "
         "source /workspace/ros2_ws/install/setup.bash && "
         f"python3 /workspace/scripts/_publish_perception_pose.py "
-        f"--object {object_name} --x {x:.6f} --y {y:.6f} --z {z:.6f}{height_arg}"
+        f"--object {shlex.quote(object_name)} "
+        f"--x {x:.6f} --y {y:.6f} --z {z:.6f}{height_arg}"
     )
-    r = _run_in_container(args, bash_cmd, timeout=10)
+    # Allows up to 10 s for DDS discovery plus 30 s of retrying cache ACKs.
+    r = _run_in_container(args, bash_cmd, timeout=45)
     for line in r.stdout.decode().strip().splitlines():
         print(f"       {line}")
+    if r.returncode != 0:
+        error = r.stderr.decode().strip()
+        if error:
+            print(f"[WARN] Perception pose delivery failed: {error}")
     return r.returncode == 0
+
+
+def _publish_dino_annotated_image(
+    args, image_path: Path, camera_source: str,
+) -> bool:
+    """Publish a saved GroundingDINO overlay through the ROS 2 relay."""
+    try:
+        container_path = Path("/workspace") / image_path.relative_to(_REPO_ROOT)
+    except ValueError:
+        print(f"[WARN] DINO image is outside the shared workspace: {image_path}")
+        return False
+
+    frame_id = (
+        "overview_camera_color_optical_frame"
+        if camera_source == "overview"
+        else "camera_color_optical_frame"
+    )
+    bash_cmd = (
+        "source /opt/ros/humble/setup.bash && "
+        "source /workspace/ros2_ws/install/setup.bash && "
+        "python3 /workspace/scripts/_publish_dino_annotated_image.py "
+        f"--image {shlex.quote(str(container_path))} "
+        f"--frame-id {shlex.quote(frame_id)}"
+    )
+    r = _run_in_container(args, bash_cmd, timeout=30)
+    output = r.stdout.decode().strip()
+    if output:
+        for line in output.splitlines():
+            print(f"       {line}")
+    if r.returncode != 0:
+        error = r.stderr.decode().strip()
+        if error:
+            print(f"[WARN] DINO annotated-image publication failed: {error}")
+        return False
+    return True
 
 
 def _estimate_object_height(
@@ -371,7 +482,9 @@ def _estimate_object_height(
 
 
 
-def _wait_step_complete(args, timeout: int = 60, min_seq: int = 0) -> dict:
+def _wait_step_complete(
+    args, timeout: int = 60, min_seq: int = 0, request_id: str = "",
+) -> dict:
     """Wait for step completion signal from orchestrator.
 
     min_seq: ignore step_complete messages with seq < this value, preventing
@@ -381,7 +494,9 @@ def _wait_step_complete(args, timeout: int = 60, min_seq: int = 0) -> dict:
     bash_cmd = (
         "source /opt/ros/humble/setup.bash && "
         "source /workspace/ros2_ws/install/setup.bash && "
-        f"python3 /workspace/scripts/_wait_step_complete.py --timeout {timeout} --min-seq {min_seq}"
+        f"python3 /workspace/scripts/_wait_step_complete.py "
+        f"--timeout {timeout} --min-seq {min_seq} "
+        f"--request-id {shlex.quote(request_id)}"
     )
     r = _run_in_container(args, bash_cmd, timeout=timeout + 5)
     if r.returncode == 0:
@@ -392,15 +507,58 @@ def _wait_step_complete(args, timeout: int = 60, min_seq: int = 0) -> dict:
     return {"success": False, "task_complete": False}
 
 
-def main() -> None:
+def main(real_ros2_default: bool = False) -> None:
     parser = argparse.ArgumentParser(description="Closed-loop task execution")
     parser.add_argument("--task",       required=True)
     parser.add_argument("--max-steps",  type=int, default=10)
-    parser.add_argument("--container",  default="vlm_ros2")
+    parser.add_argument(
+        "--container",
+        default="vlm_ros2_real" if real_ros2_default else "vlm_ros2",
+    )
     parser.add_argument("--sudo-docker", action="store_true")
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument(
+        "--execute", dest="execute", action="store_true", default=True,
+        help="Execute planned robot motions (default)",
+    )
+    execution.add_argument(
+        "--no-execute", dest="execute", action="store_false",
+        help="Capture, plan, and localize, but do not move the robot",
+    )
+    parser.add_argument(
+        "--confirm-actions", action="store_true",
+        help="Require y/yes confirmation immediately before injecting each action",
+    )
+    parser.add_argument(
+        "--real-ros2", action="store_true", default=real_ros2_default,
+        help="Use calibrated real-camera ROS 2 RGB-D topics; disable Gazebo lookup",
+    )
     parser.add_argument("--world",      default="office",
                         help="Active Gazebo world (reads overview cam pose from world file)")
+    parser.add_argument("--capture-timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--overview-image-topic",
+        default="/overview_camera/overview_camera/color/image_raw",
+    )
+    parser.add_argument(
+        "--overview-depth-topic",
+        default="/overview_camera/overview_camera/aligned_depth_to_color/image_raw",
+    )
+    parser.add_argument(
+        "--overview-info-topic",
+        default="/overview_camera/overview_camera/aligned_depth_to_color/camera_info",
+    )
+    parser.add_argument("--wrist-image-topic", default="/camera/color/image_raw")
+    parser.add_argument(
+        "--wrist-depth-topic", default="/camera/aligned_depth_to_color/image_raw"
+    )
+    parser.add_argument("--wrist-info-topic", default="/camera/color/camera_info")
     args = parser.parse_args()
+    if args.capture_timeout <= 0:
+        parser.error("--capture-timeout must be positive")
+
+    execution_mode = "ENABLED" if args.execute else "DISABLED (observation only)"
+    print(f"[LOOP] Robot execution: {execution_mode}")
 
     print("[LOOP] Loading VLM (Qwen3-VL-8B-Instruct)…")
     from vlm.planner import VLMPlanner
@@ -423,7 +581,7 @@ def main() -> None:
 
     import datetime
     _ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    _world_tag = getattr(args, "world", "unknown")
+    _world_tag = "real_ros2" if args.real_ros2 else getattr(args, "world", "unknown")
     _task_tag  = args.task[:30].replace(" ", "_").replace("/", "-")
     _RUN_DIR   = _REPO_ROOT / "data" / "runs" / f"{_ts}_{_world_tag}_{_task_tag}"
     _RUN_DIR.mkdir(parents=True, exist_ok=True)
@@ -431,12 +589,14 @@ def main() -> None:
         _rf.write(f"timestamp: {_ts}\n")
         _rf.write(f"world:     {_world_tag}\n")
         _rf.write(f"task:      {args.task}\n")
+        _rf.write(f"execute:   {args.execute}\n")
     print(f"[LOOP] Run dir: {_RUN_DIR.relative_to(_REPO_ROOT)}")
 
     # Overview camera calibration — computed once from world file (camera is static)
-    _OV_K, _OV_CTB = _get_overview_cam_data(args.world)
+    _OV_K, _OV_CTB = _get_overview_cam_data(args.world, real_ros2=args.real_ros2)
     if _OV_K is not None:
-        print("[OK]   Overview camera calibration: ready (static from SDF)")
+        source = "AprilTag calibration" if args.real_ros2 else "static from SDF"
+        print(f"[OK]   Overview camera calibration: ready ({source})")
     else:
         print("[WARN] Overview camera calibration failed — using wrist cam for VLM")
 
@@ -444,6 +604,7 @@ def main() -> None:
     # EXCL_RADIUS of a recorded position are skipped to prevent re-picking.
     _placed_at: dict[str, tuple[float, float]] = {}
     _last_dino_est: dict[str, tuple[float, float]] = {}  # last DINO estimate per name
+    _last_dino_pose: dict[str, dict] = {}  # full XYZ pose used by execution
     _EXCL_RADIUS = 0.10  # 10cm — objects within this radius are treated as identical
     # Tracks the last dispatch_seq; _wait_step_complete uses min_seq=_last_seq+1
     # to ignore stale TRANSIENT_LOCAL (latched) messages from previous steps.
@@ -466,11 +627,15 @@ def main() -> None:
         last_place = max((i for i,s in enumerate(completed_steps) if s.startswith("place") or s.startswith("stack")), default=-1)
         holding = last_pick > last_place
 
-        if not holding:
-            _pre_scan(args)
-            time.sleep(1.0)
-        else:
-            print("[LOOP] Holding object — skip scan pose, capture from current arm position")
+        # REMOVED Pre-scan
+
+        # if not args.execute:
+        #     print("[LOOP] --no-execute: pre-scan robot motion skipped")
+        # elif not holding:
+        #     _pre_scan(args)
+        #     time.sleep(1.0)
+        # else:
+        #     print("[LOOP] Holding object — skip scan pose, capture from current arm position")
 
         # 2. Capture
         image_path = _capture(args)
@@ -485,7 +650,11 @@ def main() -> None:
         print(f"[LOOP] Snapshot: {iter_path.name}")
 
         # Load overview camera image for VLM (fixed reference, better perspective)
-        _ov_path = _REPO_ROOT / "data" / "scene_overview.png"
+        _ov_path = (
+            args.ros2_capture_dir / "overview.png"
+            if args.real_ros2
+            else _REPO_ROOT / "data" / "scene_overview.png"
+        )
         if _ov_path.exists() and _OV_K is not None:
             image_vlm = PilImage.open(str(_ov_path)).convert("RGB")
         else:
@@ -495,7 +664,7 @@ def main() -> None:
         # Persist last scan-pose image + calibration for place location detection.
         # When arm is holding an object, the camera view is distorted by the arm.
         # Using the last FREE scan gives better geometry for location detection.
-        if not holding:
+        if not holding and not args.real_ros2:
             import shutil
             _data = _REPO_ROOT / "data"
             for fname in ("scene.png", "camera_info.json", "camera_pose.json"):
@@ -509,8 +678,8 @@ def main() -> None:
             'floor', 'room', 'ground_plane', 'sun', 'robot_pedestal',
             'overview_camera', 'table', 'workbench',
         })
-        gazebo_poses = {k: v for k, v in _get_gazebo_models(args).items()
-                        if k not in _INFRA}
+        raw_gazebo_poses = {} if args.real_ros2 else _get_gazebo_models(args)
+        gazebo_poses = {k: v for k, v in raw_gazebo_poses.items() if k not in _INFRA}
         gazebo_models = list(gazebo_poses.keys())
         print(f"[LOOP] Scene objects: {gazebo_models}")
 
@@ -783,6 +952,11 @@ def main() -> None:
                             _resolved_xy = (_resolved_pose["x"], _resolved_pose["y"])
                             _last_dino_est[name] = _resolved_xy
                             _last_dino_est[_gz_name_match] = _resolved_xy  # also under PDDL name
+                            _last_dino_pose[name] = {
+                                "frame_id": "fr3_link0",
+                                "position": dict(_resolved_pose),
+                                "source": "gazebo",
+                            }
                             _publish_perception_pose(
                                 args, _gz_name_match,
                                 _resolved_pose["x"], _resolved_pose["y"], _resolved_pose["z"])
@@ -797,10 +971,18 @@ def main() -> None:
                     # Load depth array for real-robot depth-based unprojection.
                     # Both wrist and overview cameras are RealSense D435i → both have depth.
                     _depth_arr = None
-                    _depth_file = {
-                        "wrist":    _REPO_ROOT / "data" / "depth.npy",
-                        "overview": _REPO_ROOT / "data" / "depth_overview.npy",
-                    }.get(src_label_all)
+                    if args.real_ros2:
+                        _depth_file = {
+                            "wrist": args.ros2_capture_dir / "wrist_depth_mm.npy",
+                            "overview": (
+                                args.ros2_capture_dir / "overview_depth_mm.npy"
+                            ),
+                        }.get(src_label_all)
+                    else:
+                        _depth_file = {
+                            "wrist": _REPO_ROOT / "data" / "depth.npy",
+                            "overview": _REPO_ROOT / "data" / "depth_overview.npy",
+                        }.get(src_label_all)
                     if _depth_file is not None and _depth_file.exists():
                         try:
                             _depth_arr = _np.load(str(_depth_file))
@@ -814,6 +996,20 @@ def main() -> None:
                     )
                     if perception._last_detection:
                         _dino_detections.append(perception._last_detection.copy())
+                    if args.real_ros2 and pose_est:
+                        # Real execution must never silently substitute a table-plane
+                        # intersection when aligned depth is absent or invalid.
+                        _valid_depth = None
+                        if _depth_arr is not None and perception._last_detection:
+                            _valid_depth = perception._median_depth_from_box(
+                                _depth_arr, perception._last_detection["box"]
+                            )
+                        if _valid_depth is None:
+                            print(
+                                f"[LOOP] DINO [{src_label_all}]: '{name}' has no "
+                                "valid aligned depth — pose rejected"
+                            )
+                            pose_est = None
                     if pose_est:
                         print(f"[LOOP] DINO [{src_label_all}]: '{name}' → "
                               f"({pose_est['x']:.3f},{pose_est['y']:.3f},{pose_est['z']:.3f})")
@@ -850,6 +1046,19 @@ def main() -> None:
                                       f"Δxy={_best_d*100:.1f}cm")
 
                         _last_dino_est[name] = (_pub_x, _pub_y)
+                        _last_dino_pose[name] = {
+                            "frame_id": "fr3_link0",
+                            "position": {
+                                "x": float(_pub_x),
+                                "y": float(_pub_y),
+                                "z": float(_pub_z),
+                            },
+                            "source": (
+                                "overview_aligned_depth"
+                                if args.real_ros2 and src_label_all == "overview"
+                                else src_label_all
+                            ),
+                        }
                         # Estimate height from the raw DINO bbox even in sim: the oracle
                         # snap overrides xyz, but _last_detection still holds the bbox.
                         _height_m = _estimate_object_height(
@@ -879,6 +1088,9 @@ def main() -> None:
                         _dino_path = _RUN_DIR / f"iter_{iteration+1:02d}_dino.png"
                         _ann.save(str(_dino_path))
                         print(f"[LOOP] DINO annotation saved: {_dino_path.name}")
+                        _publish_dino_annotated_image(
+                            args, _dino_path, src_label_all
+                        )
                     except Exception as _ae:
                         print(f"[WARN] DINO annotation failed: {_ae}")
 
@@ -901,10 +1113,10 @@ def main() -> None:
         try:
             from planner.problem_generator import generate_problem
             pddl_str = generate_problem(plan_grounded)
-            print("\n  PDDL PROBLEM:")
-            for line in pddl_str.splitlines():
-                print(f"    {line}")
-            print()
+            # print("\n  PDDL PROBLEM:")
+            # for line in pddl_str.splitlines():
+            #     print(f"    {line}")
+            # print()
         except Exception as _pe:
             pddl_str = f"# generation failed: {_pe}"
 
@@ -943,6 +1155,7 @@ def main() -> None:
                 "step_primitive":  step0.primitive if step0 else None,
                 "step_args":       dict(step0.args) if step0 else {},
                 "dino_estimates":  dict(_last_dino_est),
+                "detected_object_poses": dict(_last_dino_pose),
                 "placed_at":       {k: list(v) for k, v in _placed_at.items()},
                 "using_overview_cam": _using_overview,
             }
@@ -969,12 +1182,39 @@ def main() -> None:
             if _annot_src.exists():
                 _shutil.move(str(_annot_src), str(_iter_dir / "overview_annotated.png"))
             # Also save current overview image
-            _ov_src = _REPO_ROOT / "data" / "scene_overview.png"
+            _ov_src = (
+                args.ros2_capture_dir / "overview.png"
+                if args.real_ros2
+                else _REPO_ROOT / "data" / "scene_overview.png"
+            )
             if _ov_src.exists():
                 _shutil.copy2(str(_ov_src), str(_iter_dir / "overview.png"))
 
         except Exception as _save_err:
             print(f"[WARN] Debug save failed: {_save_err}")
+
+        if not args.execute:
+            print(
+                "[LOOP] --no-execute: plan and perception saved; "
+                "plan injection skipped"
+            )
+            break
+
+        if args.confirm_actions:
+            action = plan_grounded.steps[0]
+            action_args = ", ".join(
+                f"{key}={value!r}" for key, value in action.args.items()
+            )
+            action_text = f"{action.primitive}({action_args})"
+            print(f"\n[CONFIRM] Next robot action: {action_text}")
+            try:
+                answer = input("[CONFIRM] Execute this action? [y/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                answer = ""
+            if answer not in {"y", "yes"}:
+                print("[LOOP] Action cancelled by operator; plan was not injected.")
+                break
 
         # 6. Serialize + inject.
         # Full PDDL pipeline (no direct flag): orchestrator runs FastDownward to
@@ -984,7 +1224,9 @@ def main() -> None:
         #   - place steps without prior pick → arm is already holding the object
         #   - pour/tilt steps without prior pick → arm is already holding the source
         # This makes single-step validation correct for all mid-task states.
+        request_id = str(uuid.uuid4())
         payload = json.dumps({
+            "request_id": request_id,
             "command":  args.task,
             "vlm_plan": json.loads(plan_grounded.to_json()),
         })
@@ -1005,7 +1247,10 @@ def main() -> None:
 
         # 7. Wait for step completion
         print("[LOOP] Attendo completamento step...")
-        result = _wait_step_complete(args, timeout=60, min_seq=_last_seq + 1)
+        result = _wait_step_complete(
+            args, timeout=60, min_seq=_last_seq + 1,
+            request_id=request_id,
+        )
         if "seq" in result:
             _last_seq = result["seq"]
 

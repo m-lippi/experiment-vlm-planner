@@ -113,19 +113,23 @@ class _CaptureNode(Node):
 
         # Always capture overview camera independently (fixed reference for VLM)
         self.create_subscription(
-            Image, "/overview_camera/image_raw",
+            Image, #"/overview_camera/image_raw",
+            "/overview_camera/overview_camera/color/image_raw",
             self._cb_overview,
             qos_profile_sensor_data,
         )
         self._overview_K: np.ndarray | None = None
         self.create_subscription(
-            CameraInfo, "/overview_camera/camera_info",
+            CameraInfo, #"/overview_camera/camera_info",
+            "/overview_camera/overview_camera/aligned_depth_to_color/camera_info", 
             self._overview_cam_info_cb,
             qos_profile_sensor_data,
         )
 
         self.create_subscription(
-            CameraInfo, "/wrist_camera/camera_info",
+            CameraInfo, 
+            # "/wrist_camera/camera_info",
+            "/camera/color/image_raw", 
             self._cam_info_cb,
             qos_profile_sensor_data,
         )
@@ -133,7 +137,7 @@ class _CaptureNode(Node):
         self.depth_saved = False
         self.depth_overview_saved = False
         # Wrist depth: sim uses /wrist_camera/depth/..., real robot uses bridged topic.
-        for depth_topic in ["/wrist_camera/depth/image_rect_raw",
+        for depth_topic in ["/overview_camera/overview_camera/aligned_depth_to_color/image_raw", #"/wrist_camera/depth/image_rect_raw",
                              "/camera/depth/image_rect_raw"]:
             self.create_subscription(
                 Image, depth_topic,
@@ -142,7 +146,8 @@ class _CaptureNode(Node):
             )
         # Overview depth: same camera model (RealSense D435i), same depth channel.
         self.create_subscription(
-            Image, "/overview_camera/depth/image_rect_raw",
+            Image, #"/overview_camera/depth/image_rect_raw",
+            "/overview_camera/overview_camera/aligned_depth_to_color/image_raw", 
             self._cb_depth_overview,
             qos_profile_sensor_data,
         )
@@ -169,7 +174,7 @@ class _CaptureNode(Node):
         for attempt in range(_TF_RETRIES):
             try:
                 tf = self._tf_buffer.lookup_transform(
-                    "panda_link0", "wrist_camera_optical_frame", Time()
+                    "fr3_link0", "camera_color_optical_frame", Time()
                 )
                 tr = tf.transform.translation
                 q  = tf.transform.rotation
@@ -193,7 +198,7 @@ class _CaptureNode(Node):
         for attempt in range(_TF_RETRIES):
             try:
                 tf = self._tf_buffer.lookup_transform(
-                    "panda_link0", "overview_camera_optical_frame", Time()
+                    "fr3_link0", "overview_camera_optical_frame", Time()
                 )
                 tr = tf.transform.translation
                 q  = tf.transform.rotation

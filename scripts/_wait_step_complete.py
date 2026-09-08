@@ -30,10 +30,11 @@ from std_msgs.msg import String
 
 
 class _WaitNode(Node):
-    def __init__(self, min_seq: int = 0) -> None:
+    def __init__(self, min_seq: int = 0, request_id: str = "") -> None:
         super().__init__("_wait_step_complete")
         self.result: dict | None = None
         self._min_seq = min_seq
+        self._request_id = request_id
         # TRANSIENT_LOCAL matches publisher QoS — receives last message even if
         # published before this subscriber was created (race condition fix).
         # Stale messages are filtered by min_seq: only accept seq >= min_seq.
@@ -51,9 +52,14 @@ class _WaitNode(Node):
             return
         try:
             data = json.loads(msg.data)
+            if (
+                self._request_id
+                and data.get("request_id") != self._request_id
+            ):
+                return
             # Filter stale latched messages from previous steps.
             # seq field added by orchestrator; older messages without seq are stale.
-            if data.get("seq", 0) < self._min_seq:
+            if not self._request_id and data.get("seq", 0) < self._min_seq:
                 return
             self.result = data
         except Exception:
@@ -78,10 +84,14 @@ def main() -> None:
     parser.add_argument("--min-seq", type=int, default=0,
                         help="Ignore step_complete messages with seq < this value "
                              "(filters stale latched messages from previous steps)")
+    parser.add_argument(
+        "--request-id", default="",
+        help="Accept only the completion belonging to this injected plan",
+    )
     args = parser.parse_args()
 
     rclpy.init()
-    node     = _WaitNode(min_seq=args.min_seq)
+    node     = _WaitNode(min_seq=args.min_seq, request_id=args.request_id)
     executor = SingleThreadedExecutor()
     executor.add_node(node)
 

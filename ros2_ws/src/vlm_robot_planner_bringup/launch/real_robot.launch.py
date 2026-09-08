@@ -106,10 +106,20 @@ def generate_launch_description() -> LaunchDescription:
             package_name="moveit_resources_panda_moveit_config",
         )
         .robot_description(
-            file_path=urdf_xacro, mappings={"robot_type": "fr3", "hand": "true"}
+            file_path=urdf_xacro,
+            mappings={
+                "robot_type": "fr3",
+                "hand": "true",
+                "planning_ee_frame": "true",
+            },
         )
         .robot_description_semantic(
-            file_path=srdf_xacro, mappings={"robot_type": "fr3", "hand": "true"}
+            file_path=srdf_xacro,
+            mappings={
+                "robot_type": "fr3",
+                "hand": "true",
+                "planning_tip_link": "fr3_EE",
+            },
         )
         .robot_description_kinematics(
             file_path=os.path.join(bringup_share, "config", "kinematics_fr3.yaml")
@@ -221,13 +231,21 @@ def generate_launch_description() -> LaunchDescription:
         executable="static_transform_publisher",
         name="static_tf_fr3_to_overview_cam",
         arguments=[
+            "--x",
             LaunchConfiguration("overview_x"),
+            "--y",
             LaunchConfiguration("overview_y"),
+            "--z",
             LaunchConfiguration("overview_z"),
+            "--roll",
             LaunchConfiguration("overview_roll"),
+            "--pitch",
             LaunchConfiguration("overview_pitch"),
+            "--yaw",
             LaunchConfiguration("overview_yaw"),
+            "--frame-id",
             "fr3_link0",
+            "--child-frame-id",
             "overview_camera_optical_frame",
         ],
         parameters=[{"use_sim_time": False}],

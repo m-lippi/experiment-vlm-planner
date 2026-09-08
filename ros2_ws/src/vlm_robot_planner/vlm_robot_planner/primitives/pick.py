@@ -20,6 +20,7 @@ Side grasp geometry:
 
 from __future__ import annotations
 
+import os
 
 from geometry_msgs.msg import Pose, Quaternion
 from rclpy.node import Node
@@ -30,12 +31,13 @@ from vlm_robot_planner.primitives.base import ArmPrimitive, _TOP_DOWN_QUAT
 _APPROACH_HEIGHT_M   = 0.15   # vertical clearance above grasp for top_down
 _APPROACH_LATERAL_M  = 0.15   # lateral clearance before grasp for side
 
-# Height of panda_hand above the detected object z at the grasp pose (top_down only).
-# Franka finger length below panda_hand frame ≈ 0.133 m.
+# Height of the commanded planning frame above detected object z (top_down).
+# On the real FR3, fr3_EE is coincident with fr3_hand_tcp at the finger pads.
 # In sim: detected_z = oracle object centre → finger tips ~1.5 cm above centre.
 # On real robot (Phase 2+): detected_z from RealSense depth → same formula applies.
 # finger_tips = detected_z + _GRASP_OFFSET_Z_M - 0.133
-_GRASP_OFFSET_Z_M = 0.05 # 0.15
+_USING_FR3_EE = os.environ.get("VLM_ROBOT", "panda") == "fr3"
+_GRASP_OFFSET_Z_M = 0.01 if _USING_FR3_EE else 0.11
 
 # Side grasp: Ry(90°) × Rz(180°) body rotation.
 # EEF Z = [1,0,0] (world +X) — gripper approaches from behind along +X, unchanged.
@@ -48,7 +50,7 @@ _SIDE_GRASP_QUAT = Quaternion(x=0.7071, y=0.0, z=0.7071, w=0.0)
 # URDF: finger_joint at 0.0584 m, pad centre ~0.045 m further → total ~0.10 m.
 # Also used as grasp_offset_forward_m for GazeboAttach so the attached object
 # appears at the finger pads (not at the palm), regardless of arm depth.
-_FINGER_REACH_M = 0.10
+_FINGER_REACH_M = 0.01 if _USING_FR3_EE else 0.10
 
 # Desired finger-pad grip height above oracle z (object base on table surface).
 # 0.06m ≈ centre of a standard 330ml can (12 cm tall).

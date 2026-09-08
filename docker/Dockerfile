@@ -103,7 +103,7 @@ RUN git clone --recursive --branch 0.13.3 --depth 1 \
 # Python packages needed inside the container (non-VLM)
 RUN pip3 install --no-cache-dir \
     "numpy<2" \
-    opencv-python-headless \
+    "opencv-contrib-python-headless<4.12" \
     pillow \
     transforms3d
 

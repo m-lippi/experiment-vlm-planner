@@ -27,13 +27,15 @@ import json
 import sys
 import os
 import threading
+import time
+import uuid
 from typing import Any
 
 import rclpy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseStamped
 
@@ -81,7 +83,12 @@ class Orchestrator(Node):
         # ── Pipeline (pure Python — no ROS2 dependency) ───────────────────
         self._pipeline = Pipeline(repair_retries=3)
         self._task_lock = threading.Lock()   # prevents concurrent pipeline runs
+        self._state_lock = threading.Lock()  # atomically reserves one task
         self._busy      = False
+        self._ready     = False
+        # request_id -> (accepted, reason). Repeated plan messages only resend
+        # the original ACK; they never start the same robot action twice.
+        self._plan_request_results: dict[str, tuple[bool, str]] = {}
 
         # ── Primitive dispatch table ──────────────────────────────────────
         # Populated in _init_primitives() after MoveIt2 is ready.
@@ -119,6 +126,7 @@ class Orchestrator(Node):
         #             None in Phase 1 (oracle) → pick uses fixed fallback.
         # Poses older than _PERCEPTION_TTL_S fall back to GazeboOracle.
         self._perception_cache: dict[str, tuple] = {}
+        self._perception_condition = threading.Condition()
         self._perception_sub = self.create_subscription(
             PoseStamped,
             "/perception/object_pose",
@@ -151,7 +159,37 @@ class Orchestrator(Node):
         self._collision_pub = self.create_publisher(_CO, "/collision_object", 10)
 
         # ── Status publisher ──────────────────────────────────────────────
-        self._status_pub = self.create_publisher(String, "/vlm_planner/status", 10)
+        from rclpy.qos import QoSProfile, DurabilityPolicy
+        _latched_qos = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        _latest_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._status_pub = self.create_publisher(
+            String, "/vlm_planner/status", _latest_qos
+        )
+        self._plan_ack_pub = self.create_publisher(
+            String, "/vlm_planner/plan_ack", _latched_qos
+        )
+        self._pose_ack_pub = self.create_publisher(
+            String, "/perception/object_pose_ack", _latched_qos
+        )
+        self._dino_image_pub = self.create_publisher(
+            Image, "/perception/dino_annotated_image", _latest_qos
+        )
+        self._dino_image_ack_pub = self.create_publisher(
+            String, "/perception/dino_annotated_image_ack", _latched_qos
+        )
+        self._latest_dino_image: Image | None = None
+        self._dino_image_sub = self.create_subscription(
+            Image,
+            "/perception/dino_annotated_image_input",
+            self._on_dino_annotated_image,
+            10,
+        )
+        self._dino_image_timer = self.create_timer(
+            1.0, self._republish_dino_annotated_image
+        )
+        self._readiness_pub = self.create_publisher(
+            Bool, "/vlm_planner/ready", _latest_qos
+        )
         # ── Step-complete publisher (closed-loop support) ─────────────────
         # Published after every primitive execution.
         # Payload JSON: {"step": <i>, "primitive": "<name>", "success": bool,
@@ -159,19 +197,20 @@ class Orchestrator(Node):
         # TRANSIENT_LOCAL: late subscribers receive the last message published.
         # Prevents race condition where host _wait_step_complete subscribes after
         # the orchestrator already published the completion signal.
-        from rclpy.qos import QoSProfile, DurabilityPolicy
-        _latched_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self._step_pub = self.create_publisher(String, "/vlm_planner/step_complete", _latched_qos)
+        self._step_pub = self.create_publisher(
+            String, "/vlm_planner/step_complete", _latched_qos
+        )
         self._dispatch_seq = 0
-        self._publish_status("ready — VLM loading in background")
+        self._publish_readiness(False)
+        self._publish_status("starting — loading VLM and MoveIt2")
 
         # ── Load VLM weights in background thread ─────────────────────────
         # GPU load takes ~20-30 s; doing it in background keeps the node alive.
         threading.Thread(target=self._load_vlm_async, daemon=True).start()
 
         self.get_logger().info(
-            "Orchestrator ready. Listening on /vlm_planner/task_command. "
-            "VLM loading in background..."
+            "Orchestrator starting. Listening for commands; execution remains "
+            "disabled until MoveIt2 is ready."
         )
 
     # ── Startup helpers ───────────────────────────────────────────────────────
@@ -197,6 +236,9 @@ class Orchestrator(Node):
             self.get_logger().info("Initialising MoveIt2…")
             self._init_primitives()
             self._setup_planning_scene()
+            with self._state_lock:
+                self._ready = True
+            self._publish_readiness(True)
             self.get_logger().info("MoveIt2 ready. Orchestrator fully operational.")
             self._publish_status("ready")
         except Exception as exc:
@@ -319,13 +361,24 @@ class Orchestrator(Node):
         # Decode sideband height (orientation.z > 0 → estimated height in metres)
         h = msg.pose.orientation.z
         height_m = float(h) if h > 0.0 else None
-        self._perception_cache[obj] = (
-            t,
-            msg.pose.position.x,
-            msg.pose.position.y,
-            msg.pose.position.z,
-            height_m,
-        )
+        with self._perception_condition:
+            self._perception_cache[obj] = (
+                t,
+                msg.pose.position.x,
+                msg.pose.position.y,
+                msg.pose.position.z,
+                height_m,
+            )
+            self._perception_condition.notify_all()
+
+        ack = String()
+        ack.data = json.dumps({
+            "object": obj,
+            "stamp_sec": msg.header.stamp.sec,
+            "stamp_nanosec": msg.header.stamp.nanosec,
+            "cached": True,
+        })
+        self._pose_ack_pub.publish(ack)
         height_str = f", h={height_m:.3f}m" if height_m else ""
         from vlm_robot_planner.primitives.base import BASE_FRAME as _frame
         self.get_logger().info(
@@ -333,6 +386,28 @@ class Orchestrator(Node):
             f"({msg.pose.position.x:.3f}, {msg.pose.position.y:.3f}, "
             f"{msg.pose.position.z:.3f}) {_frame}{height_str}"
         )
+
+    def _on_dino_annotated_image(self, msg: Image) -> None:
+        """Retain and publish the latest host-generated GroundingDINO overlay."""
+        self._latest_dino_image = msg
+        self._dino_image_pub.publish(msg)
+
+        ack = String()
+        ack.data = json.dumps({
+            "stamp_sec": msg.header.stamp.sec,
+            "stamp_nanosec": msg.header.stamp.nanosec,
+            "published": True,
+        })
+        self._dino_image_ack_pub.publish(ack)
+        self.get_logger().info(
+            f"[Perception] DINO annotated image published "
+            f"({msg.width}x{msg.height})"
+        )
+
+    def _republish_dino_annotated_image(self) -> None:
+        """Keep the latest overlay visible to late volatile image subscribers."""
+        if self._latest_dino_image is not None:
+            self._dino_image_pub.publish(self._latest_dino_image)
 
     def _command_callback(self, msg: String) -> None:
         """
@@ -343,16 +418,18 @@ class Orchestrator(Node):
         if not command:
             return
 
-        if self._busy:
+        accepted, reason = self._reserve_execution()
+        if not accepted:
             self.get_logger().warn(
-                f"Orchestrator busy — ignoring command: '{command}'"
+                f"Orchestrator {reason} — ignoring command: '{command}'"
             )
-            self._publish_status("busy — ignoring new command")
+            self._publish_status(f"{reason} — ignoring new command")
             return
 
         self.get_logger().info(f"Task received: '{command}'")
+        request_id = str(uuid.uuid4())
         threading.Thread(
-            target=self._run_task, args=(command,), daemon=True
+            target=self._run_task, args=(command, None, request_id), daemon=True
         ).start()
 
     def _inject_plan_callback(self, msg: String) -> None:
@@ -362,20 +439,38 @@ class Orchestrator(Node):
             {"command": "<task text>", "vlm_plan": { <VLMPlan fields> }}
         Skips VLM inference; uses Pipeline.run(vlm_plan=...) directly.
         """
-        if self._busy:
-            self.get_logger().warn("Orchestrator busy — ignoring injected plan.")
-            self._publish_status("busy — ignoring injected plan")
-            return
-
+        request_id = ""
         try:
             data = json.loads(msg.data)
+            request_id = str(data.get("request_id") or uuid.uuid4())
             command  = data.get("command", "injected plan")
             direct   = data.get("direct", False)   # closed-loop: skip PDDL
             from vlm.planner import VLMPlan
             vlm_plan = VLMPlan.from_json(json.dumps(data["vlm_plan"]))
         except Exception as exc:
             self.get_logger().error(f"inject_plan: invalid JSON — {exc}")
+            self._publish_plan_ack(request_id, False, f"invalid plan: {exc}")
             return
+
+
+        accepted, reason, duplicate = self._claim_plan_request(request_id)
+        if duplicate:
+            self.get_logger().info(
+                f"Duplicate injected plan {request_id} — resending prior ACK "
+                "without executing it again."
+            )
+            self._publish_plan_ack(request_id, accepted, reason)
+            return
+
+        if not accepted:
+            self.get_logger().warn(
+                f"Orchestrator {reason} — rejecting injected plan {request_id}."
+            )
+            self._publish_plan_ack(request_id, False, reason)
+            self._publish_status(f"{reason} — rejected injected plan")
+            return
+
+        self._publish_plan_ack(request_id, True, "accepted")
 
         self.get_logger().info(
             f"Injected plan received: '{command}' "
@@ -388,31 +483,37 @@ class Orchestrator(Node):
             # Used when the VLM plans one step at a time and PDDL validation
             # would fail due to incomplete goal inference for partial plans.
             threading.Thread(
-                target=self._run_direct, args=(command, vlm_plan), daemon=True
+                target=self._run_direct,
+                args=(command, vlm_plan, request_id), daemon=True,
             ).start()
         else:
             threading.Thread(
-                target=self._run_task, args=(command, vlm_plan), daemon=True
+                target=self._run_task,
+                args=(command, vlm_plan, request_id), daemon=True,
             ).start()
 
     # ── Task execution ────────────────────────────────────────────────────────
 
-    def _run_task(self, command: str, vlm_plan=None) -> None:
+    def _run_task(self, command: str, vlm_plan=None, request_id: str = "") -> None:
         with self._task_lock:
-            self._busy = True
             self._publish_status(f"busy — planning: {command}")
             success = False
             try:
-                success = self.run(command, vlm_plan=vlm_plan)
+                success = self.run(
+                    command, vlm_plan=vlm_plan, request_id=request_id
+                )
             except Exception as exc:
                 self.get_logger().error(f"Orchestrator: unhandled exception: {exc}")
                 import traceback
                 self.get_logger().error(traceback.format_exc())
+                self._publish_step_complete(
+                    -1, "execution", False, False, request_id=request_id
+                )
             finally:
-                self._busy = False
+                self._release_execution()
                 self._publish_status("ready" if success else f"error — task failed: {command}")
 
-    def _run_direct(self, command: str, vlm_plan) -> None:
+    def _run_direct(self, command: str, vlm_plan, request_id: str = "") -> None:
         """Execute VLM steps directly, bypassing PDDL (closed-loop mode).
 
         Used in closed-loop iterations where the VLM plans ONE step at a time.
@@ -420,8 +521,8 @@ class Orchestrator(Node):
         produce trivially-empty FD plans.  The VLM's decision is trusted directly.
         """
         with self._task_lock:
-            self._busy = True
             self._publish_status(f"busy — direct: {command}")
+            success = False
             try:
                 from planner.plan_parser import PrimitiveCall
 
@@ -474,23 +575,31 @@ class Orchestrator(Node):
                             f"[direct] Novel action '{prim.name}' failed — "
                             "logging gracefully (VLM plan was valid, execution limited)")
                         ok = True  # treat as success for loop continuity
-                    self._publish_step_complete(i, prim.name, ok,
-                                                task_complete=(i == len(primitives)-1) and ok)
+                    self._publish_step_complete(
+                        i, prim.name, ok,
+                        task_complete=(i == len(primitives)-1) and ok,
+                        request_id=request_id,
+                    )
                     if not ok:
                         self.get_logger().error(f"[direct] '{prim.name}' failed")
                         self._publish_status(f"error — direct step failed: {prim.name}")
                         return
 
                 self.get_logger().info("[direct] Step executed successfully.")
-                self._publish_status("ready")
+                success = True
             except Exception as exc:
                 self.get_logger().error(f"_run_direct: {exc}")
                 import traceback; self.get_logger().error(traceback.format_exc())
                 self._publish_status(f"error — {exc}")
+                self._publish_step_complete(
+                    -1, "execution", False, False, request_id=request_id
+                )
             finally:
-                self._busy = False
+                self._release_execution()
+                if success:
+                    self._publish_status("ready")
 
-    def run(self, command: str, vlm_plan=None) -> bool:
+    def run(self, command: str, vlm_plan=None, request_id: str = "") -> bool:
         """
         Execute one full task:
           images → VLM → PDDL pipeline → primitives → robot.
@@ -523,6 +632,9 @@ class Orchestrator(Node):
             self.get_logger().error(
                 f"Pipeline failed at '{result.failure_stage}': {result.error}"
             )
+            self._publish_step_complete(
+                -1, "planning", False, False, request_id=request_id
+            )
             return False
 
         self.get_logger().info(
@@ -545,12 +657,21 @@ class Orchestrator(Node):
 
         # Dispatch each primitive — oracle lookup is lazy inside _dispatch
         n = len(result.primitives)
+        if n == 0:
+            self.get_logger().error("Validated plan contains no executable primitives.")
+            self._publish_step_complete(
+                -1, "planning", False, False, request_id=request_id
+            )
+            return False
         for i, prim in enumerate(result.primitives):
             self.get_logger().info(f"  → {prim.name}({prim.args})")
 
             ok = self._dispatch(prim)
             is_last = (i == n - 1)
-            self._publish_step_complete(i, prim.name, ok, task_complete=is_last and ok)
+            self._publish_step_complete(
+                i, prim.name, ok, task_complete=is_last and ok,
+                request_id=request_id,
+            )
             if not ok:
                 self.get_logger().error(
                     f"Primitive '{prim.name}' failed — aborting task."
@@ -572,10 +693,53 @@ class Orchestrator(Node):
         "pour":  1,   # pour(source, target) — target is args[1], source is in gripper
     }
 
+    _POSE_REQUIRED = frozenset({"pick", "place", "pour", "tilt", "cut", "stir"})
+    _PERCEPTION_WAIT_S = 10.0
+
+    def _cached_perception_pose(
+        self, object_name: str, wait_timeout: float = 0.0,
+        ttl: float = 60.0,
+    ) -> dict | None:
+        """Return a fresh cached pose, waiting for its callback when requested."""
+        deadline = time.monotonic() + max(0.0, wait_timeout)
+        with self._perception_condition:
+            while True:
+                cached = self._perception_cache.get(object_name)
+                if cached is not None:
+                    age = self.get_clock().now().nanoseconds / 1e9 - cached[0]
+                    if age < ttl:
+                        from simulation.oracle.world_state import Position, Orientation
+                        height_m = cached[4] if len(cached) > 4 else None
+                        self.get_logger().info(
+                            f"[Perception] Using cached pose for '{object_name}' "
+                            f"(age {age:.1f}s) — oracle bypassed"
+                        )
+                        return {
+                            "position": Position(
+                                x=cached[1], y=cached[2], z=cached[3]
+                            ),
+                            "orientation": Orientation(
+                                x=0.0, y=0.0, z=0.0, w=1.0
+                            ),
+                            "height_m": height_m,
+                        }
+
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return None
+                self._perception_condition.wait(timeout=remaining)
+
     def _dispatch(self, prim: PrimitiveCall) -> bool:
         """Route a PrimitiveCall to the correct handler."""
         handler = self._prim_dispatch.get(prim.name)
+        # print('Handler')
+        # print(handler)
         if handler is None:
+            if not self._ready:
+                self.get_logger().error(
+                    f"Cannot dispatch '{prim.name}': orchestrator is not ready."
+                )
+                return False
             self.get_logger().warn(f"Unknown primitive '{prim.name}' — skipping.")
             return True   # unknown primitives are non-fatal in Phase 1
 
@@ -587,24 +751,102 @@ class Orchestrator(Node):
         _PERCEPTION_TTL_S = 60.0
 
         pose_data = None
+
+        if (
+            prim.name in self._POSE_REQUIRED
+            and self._oracle is None
+            and not obj_name
+        ):
+            self.get_logger().error(
+                f"Cannot execute '{prim.name}': plan contains no pose target."
+            )
+            return False
+
+
+        # if obj_name:
+        #     # Phase 2: prefer PerceptionModule estimate when fresh.
+        #     # Wait up to 3 seconds because the perception message may arrive
+        #     # shortly after the primitive is dispatched.
+        #     _PERCEPTION_TTL_S = 60.0
+        #     _POSE_WAIT_S = 3.0
+        #     _POSE_POLL_S = 0.05
+
+        #     import time
+
+        #     deadline = time.monotonic() + _POSE_WAIT_S
+
+        #     while time.monotonic() < deadline:
+        #         print(time.monotonic())
+        #         cached = self._perception_cache.get(obj_name)
+        #         print(cached)
+        #         if cached is not None:
+        #             t_cached, cx, cy, cz = (
+        #                 cached[0], cached[1], cached[2], cached[3]
+        #             )
+        #             height_m = cached[4] if len(cached) > 4 else None
+
+        #             age = (
+        #                 self.get_clock().now().nanoseconds / 1e9
+        #                 - t_cached
+        #             )
+
+        #             if age < _PERCEPTION_TTL_S:
+        #                 from simulation.oracle.world_state import Position, Orientation
+
+        #                 pose_data = {
+        #                     "position": Position(x=cx, y=cy, z=cz),
+        #                     "orientation": Orientation(
+        #                         x=0.0, y=0.0, z=0.0, w=1.0
+        #                     ),
+        #                     "height_m": height_m,
+        #                 }
+
+        #                 self.get_logger().info(
+        #                     f"[Perception] Using cached pose for '{obj_name}' "
+        #                     f"(age {age:.1f}s) — oracle bypassed"
+        #                 )
+        #                 break
+
+        #         time.sleep(_POSE_POLL_S)
+
+        #     # Pose still not available after waiting.
+        #     if pose_data is None and self._oracle is not None:
+        #         self.get_logger().warn(
+        #             f"[Perception] No pose for '{obj_name}' after "
+        #             f"{_POSE_WAIT_S:.1f}s — trying GazeboOracle."
+        #         )
+
+        #         pose = self._oracle.get_pose(obj_name)
+
+        #         if pose is not None:
+        #             pose_data = {
+        #                 "position": pose.position,
+        #                 "orientation": pose.orientation,
+        #             }
+        #         else:
+        #             self.get_logger().warn(
+        #                 f"Oracle: no pose for '{obj_name}' — "
+        #                 "primitive will use None pose."
+        #             )
+
+        #     elif pose_data is None and self._oracle is None:
+        #         self.get_logger().warn(
+        #             f"No pose for '{obj_name}' after "
+        #             f"{_POSE_WAIT_S:.1f}s in real-robot mode. "
+        #             "Primitive will use None pose."
+        #         )
+
         if obj_name:
-            # Phase 2: prefer PerceptionModule estimate when fresh
-            cached = self._perception_cache.get(obj_name)
-            if cached is not None:
-                t_cached, cx, cy, cz = cached[0], cached[1], cached[2], cached[3]
-                height_m = cached[4] if len(cached) > 4 else None
-                age = self.get_clock().now().nanoseconds / 1e9 - t_cached
-                if age < _PERCEPTION_TTL_S:
-                    from simulation.oracle.world_state import Position, Orientation
-                    pose_data = {
-                        "position":    Position(x=cx, y=cy, z=cz),
-                        "orientation": Orientation(x=0.0, y=0.0, z=0.0, w=1.0),
-                        "height_m":    height_m,
-                    }
-                    self.get_logger().info(
-                        f"[Perception] Using cached pose for '{obj_name}' "
-                        f"(age {age:.1f}s) — oracle bypassed"
-                    )
+            # In real mode, wait for the executor to run a possibly queued pose
+            # callback before declaring the pose unavailable.
+            wait_timeout = (
+                self._PERCEPTION_WAIT_S
+                if self._oracle is None and prim.name in self._POSE_REQUIRED
+                else 0.0
+            )
+            pose_data = self._cached_perception_pose(
+                obj_name, wait_timeout=wait_timeout, ttl=_PERCEPTION_TTL_S
+            )
 
             # Oracle fallback — lazy single query (only for needed object)
             if pose_data is None and self._oracle is not None:
@@ -625,6 +867,19 @@ class Orchestrator(Node):
                     "oracle is disabled (real-robot mode). "
                     "Run look_at first to populate the perception cache."
                 )
+
+        if (
+            prim.name in self._POSE_REQUIRED
+            and obj_name
+            and pose_data is None
+            and self._oracle is None
+        ):
+            self.get_logger().error(
+                f"Cannot execute '{prim.name}': no fresh perception pose "
+                f"for '{obj_name}' after waiting "
+                f"{self._PERCEPTION_WAIT_S:.1f}s."
+            )
+            return False
 
         if prim.name == "tilt":
             try:
@@ -664,16 +919,13 @@ class Orchestrator(Node):
             source_name = prim.args[0] if len(prim.args) > 0 else ""
             source_pose_data = None
             if source_name:
-                cached = self._perception_cache.get(source_name)
-                if cached is not None:
-                    from simulation.oracle.world_state import Position, Orientation
-                    cx, cy, cz = cached[1], cached[2], cached[3]
-                    age = self.get_clock().now().nanoseconds / 1e9 - cached[0]
-                    if age < 60.0:
-                        source_pose_data = {
-                            "position":    Position(x=cx, y=cy, z=cz),
-                            "orientation": Orientation(x=0.0, y=0.0, z=0.0, w=1.0),
-                        }
+                source_pose_data = self._cached_perception_pose(
+                    source_name,
+                    wait_timeout=(
+                        self._PERCEPTION_WAIT_S
+                        if self._oracle is None else 0.0
+                    ),
+                )
                 if source_pose_data is None and self._oracle is not None:
                     src_p = self._oracle.get_pose(source_name)
                     if src_p is not None:
@@ -681,6 +933,12 @@ class Orchestrator(Node):
                             "position":    src_p.position,
                             "orientation": src_p.orientation,
                         }
+                if source_pose_data is None and self._oracle is None:
+                    self.get_logger().error(
+                        f"Cannot execute 'pour': no fresh source pose for "
+                        f"'{source_name}'."
+                    )
+                    return False
             return handler(
                 obj_name, pose_data,
                 source_name=source_name,
@@ -719,13 +977,71 @@ class Orchestrator(Node):
 
     # ── Status ────────────────────────────────────────────────────────────────
 
+    def _reserve_execution(self) -> tuple[bool, str]:
+        """Atomically accept one task only when startup has completed."""
+        with self._state_lock:
+            if not self._ready:
+                return False, "not ready"
+            if self._busy:
+                return False, "busy"
+            self._busy = True
+            return True, "accepted"
+
+    def _claim_plan_request(self, request_id: str) -> tuple[bool, str, bool]:
+        """Atomically reserve a new plan or identify a duplicate request."""
+        with self._state_lock:
+            previous = self._plan_request_results.get(request_id)
+            if previous is not None:
+                return previous[0], previous[1], True
+
+            if not self._ready:
+                result = (False, "not ready")
+            elif self._busy:
+                result = (False, "busy")
+            else:
+                self._busy = True
+                result = (True, "accepted")
+
+            self._plan_request_results[request_id] = result
+            # Bound memory use while retaining ample history for delayed DDS
+            # duplicates. dict insertion order is guaranteed by Python 3.7+.
+            while len(self._plan_request_results) > 100:
+                oldest = next(iter(self._plan_request_results))
+                del self._plan_request_results[oldest]
+            return result[0], result[1], False
+
+    def _release_execution(self) -> None:
+        with self._state_lock:
+            self._busy = False
+
+    def _publish_plan_ack(
+        self, request_id: str, accepted: bool, reason: str
+    ) -> None:
+        msg = String()
+        msg.data = json.dumps({
+            "request_id": request_id,
+            "accepted": accepted,
+            "reason": reason,
+        })
+        self._plan_ack_pub.publish(msg)
+        self.get_logger().info(
+            f"Plan acknowledgement: request_id={request_id}, "
+            f"accepted={accepted}, reason={reason}"
+        )
+
     def _publish_status(self, status: str) -> None:
         msg = String()
         msg.data = status
         self._status_pub.publish(msg)
 
+    def _publish_readiness(self, ready: bool) -> None:
+        msg = Bool()
+        msg.data = ready
+        self._readiness_pub.publish(msg)
+
     def _publish_step_complete(
-        self, step: int, primitive: str, success: bool, task_complete: bool
+        self, step: int, primitive: str, success: bool, task_complete: bool,
+        request_id: str = "",
     ) -> None:
         """Publish step completion for closed-loop host monitoring."""
         self._dispatch_seq += 1
@@ -736,6 +1052,7 @@ class Orchestrator(Node):
             "success":       success,
             "task_complete": task_complete,
             "seq":           self._dispatch_seq,
+            "request_id":    request_id,
         })
         self._step_pub.publish(msg)
 

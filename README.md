@@ -319,6 +319,99 @@ Keyboard shortcuts (active when the image area has focus, disabled while typing 
 | `Q` / `E` | roll + / − |
 | `R` / `F` | z\_table + / − |
 
+#### AprilTag calibration (non-interactive alternative)
+
+An AprilTag fixed to the table can replace the manual slider calibration. Use
+the same tag ID, family, and measured black-square edge size in both steps, and
+keep the robot stationary while recording the wrist-camera measurement.
+
+Run the scripts in the ROS 2 environment (inside `vlm_ros2` when using the
+container):
+
+```bash
+# 1. Put the tag in view of /camera/color/image_raw and save its pose in fr3_link0.
+python3 scripts/save_table_apriltag_transform.py \
+  --tag-id 0 --tag-size 0.080
+
+# 2. Put the same fixed tag in view of the overview camera.
+python3 scripts/calibrate_overview_camera_apriltag.py --tag-id 0
+```
+
+Step 1 writes `data/table_apriltag_transform.json`. Step 2 reads intrinsics
+from `/overview_camera/overview_camera/aligned_depth_to_color/camera_info` and
+writes `data/overview_camera_info.json`, `data/overview_camera_setup.json`, and
+`data/overview_camera_pose.json`. By default, the tag origin's Z coordinate is
+used as `z_table`; pass `--table-z <metres>` when the tag is not flush with the
+table surface. Restart `real_robot.launch.py` after step 2 so it reloads the
+static overview-camera transform.
+
+#### ROS 2 RGB-D capture and planning
+
+Once calibrated, use the ROS 2-native capture path instead of opening the two
+RealSense devices directly with `pyrealsense2`:
+
+```bash
+bin/capture_and_plan_ros2.sh \
+  --task "pick the red cup and place it next to the pen" \
+  --publish-poses
+```
+
+The command captures aligned overview color/depth and camera intrinsics from
+the `/overview_camera/overview_camera/...` topics. It optionally captures the
+wrist camera from `/camera/...`, generates the plan, runs GroundingDINO for all
+objects referenced by that plan, and writes each depth-derived position in
+`fr3_link0` to `data/ros2_runs/<run>/detections_with_poses.json`.
+
+If the calibrated overview transform is missing from TF, the capture helper
+publishes it from `data/overview_camera_pose.json`, and the host entry point
+starts a persistent static publisher in `vlm_ros2`. Use
+`--no-publish-overview-tf` to disable that fallback. For capture and detection
+without VLM inference:
+
+```bash
+bin/capture_and_plan_ros2.sh --no-vlm --objects red_cup pen
+```
+
+For closed-loop execution on the real robot, start `real_robot.launch.py` and
+use the corresponding loop entry point:
+
+```bash
+bin/run_loop_ros2.sh "pick the red cup and place it next to the pen"
+```
+
+This uses the same replanning and execution state machine as
+`run_loop_host.py`, but captures both cameras through ROS 2, loads the
+AprilTag-derived overview calibration, uses aligned depth for object poses, and
+does not query or snap positions to Gazebo. The latest GroundingDINO overlay is
+published on `/perception/dino_annotated_image`. Camera topic overrides can be
+passed after the task, for example:
+
+```bash
+bin/run_loop_ros2.sh "pick the cup" \
+  --wrist-depth-topic /camera/aligned_depth_to_color/image_raw \
+  --max-steps 8
+```
+
+Robot execution is enabled by default. To run one observation/planning cycle,
+save its perception/debug outputs, and stop without moving the arm, use:
+
+```bash
+bin/run_loop_ros2.sh "pick the cup" --no-execute
+```
+
+`--no-execute` also suppresses the pre-scan movement and never injects the plan
+into the orchestrator. `--execute` can be passed explicitly when desired.
+
+To require operator approval immediately before every planned action is sent
+to the robot, use:
+
+```bash
+bin/run_loop_ros2.sh "pick the cup" --confirm-actions
+```
+
+Only `y` or `yes` executes the displayed action. Any other response cancels the
+loop without injecting it.
+
 ### Network requirements
 
 - Development machine and robot PC must be on the same LAN.

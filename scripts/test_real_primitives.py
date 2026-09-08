@@ -57,6 +57,7 @@ ALL_TESTS = [
     "cut",
     "pick",
     "place",
+    "pick_lateral",
 ]
 
 SENSOR_QOS = QoSProfile(
@@ -224,14 +225,12 @@ def run(args: argparse.Namespace) -> int:
 
         
         #NOTA: su z sottraggo 0.05 dato che grasp è +0.05 rispetto alla posizione dell'oggetto
-        object_point = Point(x=0.427, y=0.055, z=0.497-0.05)
-        # Place's release pose is target.z + 0.22.
-        # place_point = Point(
-        #     x=eef.x + args.place_x,
-        #     y=eef.y + args.place_y,
-        #     z=eef.z - 0.1,
-        # )
-        place_point = Point(x=object_point.x + args.place_x, y=object_point.y + args.place_y, z=0.497)
+        # object_point = Point(x=0.427, y=0.055, z = 0.38)#z=0.497-0.05)
+
+        #######LATERAL GRASP
+        object_point = Point(x=0.527, y=0.055, z = 0.38)#z=0.497-0.05)
+
+        place_point = Point(x=object_point.x + args.place_x, y=object_point.y + args.place_y, z=0.38)
         # Stir and cut are exercised in free space around the startup EEF,
         # without a tool or physical surface.
         work_point = Point(x=eef.x, y=eef.y, z=eef.z)
@@ -317,12 +316,16 @@ def run(args: argparse.Namespace) -> int:
                     lambda: node.cut.execute("virtual_object", pose_data(work_point))
                 ),
             ),
-            # "pick": (
-            #     "Place a LIGHTWEIGHT object between the fingers at the startup EEF pose. "
-            #     f"PickPrimitive grasps without repositioning, then lifts "
-            #     f"{args.pick_lift:.3f} m vertically.",
-            #     test_prepositioned_pick,
-            # ),
+            "pick_lateral": (
+                "Place a LIGHTWEIGHT object between the fingers at the startup EEF pose. "
+                "The test opens, approaches, grasps from side, attaches it in MoveIt, and retreats.",
+                lambda: node.pick.execute(
+                    "primitive_test_object",
+                    pose_data(object_point),
+                    grasp_mode="side",
+                    object_height_m=args.object_height,
+                ),
+            ),
             "pick": (
                 "Place a LIGHTWEIGHT object between the fingers at the startup EEF pose. "
                 "The test opens, approaches, grasps, attaches it in MoveIt, and retreats.",

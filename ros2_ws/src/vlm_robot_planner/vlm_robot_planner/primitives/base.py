@@ -34,10 +34,11 @@ if _ROBOT == "fr3":
     ARM_JOINT_NAMES = [f"fr3_joint{i}" for i in range(1, 8)]
     ARM_GROUP       = "fr3_arm"
     BASE_FRAME      = "fr3_link0"
-    EEF_LINK        = "fr3_hand"
+    EEF_LINK        = "fr3_EE"
     _HELD_OBJ_LINK  = "fr3_hand"
     _TOUCH_LINKS    = [
-        "fr3_hand", "fr3_leftfinger", "fr3_rightfinger",
+        "fr3_EE", "fr3_hand", "fr3_hand_tcp",
+        "fr3_leftfinger", "fr3_rightfinger",
         "fr3_link6", "fr3_link7", "fr3_link8",
     ]
     _GRIPPER_ACTION = "/franka_gripper/gripper_action"

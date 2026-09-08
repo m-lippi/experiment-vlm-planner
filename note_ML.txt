@@ -11,7 +11,7 @@ docker ps
 - tf read 
 ros2 run  tf2_ros tf2_echo fr3_link0 fr3_hand
 
-
+docker logs -f vlm_ros2_real 2>&1 | grep --line-buffered -E 'vlm_robot_planner|MoveIt2|Perception|Primitive|Orchestrator'
 	
 TO TEST:  
 
@@ -35,9 +35,6 @@ After the specified interval, execution starts automatically. Set plan_preview_d
  
  ESITO: look_at works - pick works (grasp pose è 5cm sopra oggetto e pre grasp è 15 cm sopra grasp) - place works (place point è +3cm rispetto a oggetto, pre place +15 cm rispetto a place)
  
- 
- sed -n '1,260p' \
-$(ros2 pkg prefix realsense2_camera)/share/realsense2_camera/examples/align_depth/rs_align_depth_launch.py
 
  Le primitive lavorano con le terne fr3_link0 fr3_hand
  It covers:
@@ -63,30 +60,18 @@ bin/run_test_primitives.sh --only tilt
 bin/run_test_primitives.sh --only pick --only place
 Run the complete interactive sequence:
 bin/run_test_primitives.sh
-The runner defaults to 10% velocity, asks before every step, restores the initial arm configuration between independent tests, and uses free-space virtual targets for stirring and cutting. The pour primitive was also changed so it cannot override the runner?s lower safety speed.
+
  
  5-- test the camera 
  
- 
+ Nota: non si usano + i seguenti topic
     "/wrist_camera/image_raw",
     "/overview_camera/image_raw",
  
- 
- Prendere seriale: 
-
+OLD: Per prendere seriale camere usare: (non serve)
 source .venv/bin/activate
 python scripts/capture_and_plan.py --list
-```
 
-Example output:
-```
-[0] serial=242322071571  name=Intel RealSense D435I   ? overview (fixed stand)
-[1] serial=241122072695  name=Intel RealSense D435I   ? wrist (on end-effector)
-```
-
-The **overview** camera is the one physically mounted on the fixed stand above the table; the **wrist** camera is the one attached to the end-effector. Note the serials ? you will need them for the calibration step below and for `capture_and_plan.py`.
-
-### Overview camera calibration (one-time, run on host)
 
 The overview camera must be calibrated once after mounting. The calibration stores the camera pose relative to `panda_link0` in `data/overview_camera_setup.json`; `real_robot.launch.py` reads this file automatically on every subsequent launch.
 
@@ -95,16 +80,7 @@ source .venv/bin/activate
 python scripts/setup_overview_camera.py --serial <OVERVIEW_SERIAL>
 ```
  
- 
- TO DO 
- - remap di camera wrist e settaggio del link 
- <launch>
-  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
-    <arg name="camera" value="wrist_camera"/>
-  </include>
-</launch>
-
-Al momento in _capture cerca la trasformata: 
+ Al momento in _capture cerca la trasformata: 
 lookup_transform(
     "panda_link0",                 # target
     "wrist_camera_optical_frame",  # source
@@ -118,6 +94,8 @@ lookup_transform(
     "camera_color_optical_frame",
     Time(),
 )
+
+
 The actual camera frame must be verified from:
 ros2 topic echo /camera/color/image_raw/header --once
 Then test whether the complete TF chain exists:
@@ -125,19 +103,192 @@ docker exec -it vlm_ros2_real bash
 source /opt/ros/humble/setup.bash
 ros2 run tf2_ros tf2_echo fr3_link0 camera_color_optical_frame
 
--- launch di overview camera 
-Attualmenta la trasformata è letta dal file overview_camera_setup.json
-
-
 -- capire trasformata  "world", "fr3_link0" in real_robot.launc
 
  - rimpiazzare setup camera con apriltag
  
  
  
- 
  NOTE: ora pubblica come overview_camera/overview_camera/color/image_raw
  
  
- 
+ STATO: primitive funzionano, le due camere girano, esiste tf tree da link0 a camera_link (wrist)
+overview_camera/overview_camera/color/image_raw
 
+
+
+LAVORARE SU 
+1) OKK --- rimpiazzare _capture_scene.py --- setup
+
+
+Implemented the AprilTag-based calibration workflow.
+New scripts:
+- [save_table_apriltag_transform.py](/home/alexis-martinez/Desktop/real-robot/scripts/save_table_apriltag_transform.py) detects the tag from /camera/color/image_raw, combines it with wrist-camera TF, and saves the tag pose in fr3_link0.
+- [calibrate_overview_camera_apriltag.py](/home/alexis-martinez/Desktop/real-robot/scripts/calibrate_overview_camera_apriltag.py) reads the requested overview CameraInfo, detects the same tag, and writes:
+  - data/overview_camera_info.json
+  - data/overview_camera_setup.json
+  - data/overview_camera_pose.json
+Usage:
+# Keep the robot stationary and show the tag to the wrist camera.
+python3 scripts/save_table_apriltag_transform.py --tag-id 0 --tag-size 0.080
+
+
+# Without moving the tag, show it to the overview camera.
+python3 scripts/calibrate_overview_camera_apriltag.py --tag-id 0 --tag-size 0.080
+
+
+  --tag-id 0
+--tag-size is the outer black-square edge length in metres. If the tag is not flush with the tabletop, pass the actual table height using --table-z.
+
+
+2) OKK --- Created a ROS 2-native RGB-D capture and planning workflow.
+Main entry point:
+bin/capture_and_plan_ros2.sh --task "pick the red box and place in the bowl" --publish-poses
+It:
+- Captures overview aligned RGB, depth, and CameraInfo through ROS 2 topics.
+- Optionally captures the wrist camera.
+- Runs VLM planning and GroundingDINO detection.
+- Converts each detection?s median depth into a 3-D position in fr3_link0.
+- Saves results under data/ros2_runs/<timestamp>_<task>/, including:
+  - detections_with_poses.json
+  - overview_detections.png
+  - RGB/depth/calibration snapshots
+  - plan.json
+  - problem.pddl
+- Optionally publishes detected positions to /perception/object_pose.
+- Publishes the calibrated overview static transform if it is absent.
+Files added:
+- [capture_and_plan_ros2.py](/home/alexis-martinez/Desktop/real-robot/scripts/capture_and_plan_ros2.py)
+- [_capture_ros2_cameras.py](/home/alexis-martinez/Desktop/real-robot/scripts/_capture_ros2_cameras.py)
+- [capture_and_plan_ros2.sh](/home/alexis-martinez/Desktop/real-robot/bin/capture_and_plan_ros2.sh)
+
+Capture-only usage:
+bin/capture_and_plan_ros2.sh \
+  --no-vlm \
+  --objects red_cup pen
+If wrist aligned depth is unavailable:
+bin/capture_and_plan_ros2.sh \
+  --task "pick the cup" \
+  --no-wrist
+  
+ 3) 
+ Created the real-world ROS 2 closed-loop equivalent.
+Run it with:
+bin/run_loop_ros2.sh "pick the red box and place in the bowl" --confirm-actions
+Added:
+- [run_loop_ros2_host.py](/home/alexis-martinez/Desktop/real-robot/scripts/run_loop_ros2_host.py)
+- [run_loop_ros2.sh](/home/alexis-martinez/Desktop/real-robot/bin/run_loop_ros2.sh)
+The real mode reuses the existing closed-loop state machine but:
+- Captures aligned RGB-D data through the configured ROS 2 topics.
+- Loads the AprilTag-derived overview intrinsics and cam_to_base.
+- Disables Gazebo model queries and oracle position snapping.
+- Uses overview depth for GroundingDINO object localization.
+- Rejects detections without valid aligned depth instead of falling back to a guessed table plane.
+- Publishes accepted poses through /perception/object_pose.
+- Records full XYZ poses in each iteration?s debug.json under detected_object_poses.
+- Falls back to the overview camera if wrist RGB-D or wrist TF is unavailable.
+Topic overrides can be passed after the task:
+bin/run_loop_ros2.sh "pick the cup" \
+  --overview-image-topic /overview_camera/overview_camera/color/image_raw \
+  --overview-depth-topic /overview_camera/overview_camera/aligned_depth_to_color/image_raw \
+  --overview-info-topic /overview_camera/overview_camera/aligned_depth_to_color/camera_info \
+  --wrist-image-topic /camera/color/image_raw \
+  --wrist-depth-topic /camera/aligned_depth_to_color/image_raw \
+  --wrist-info-topic /camera/color/camera_info \
+  --max-steps 8
+The implementation passed compilation, shell syntax, calibration loading, and ROS capture-contract tests. Robot execution was intentionally not started because the camera topics were not active.
+
+
+
+MINOR:  rimuovere tempo di attesa di 3 sec
+
+TO TEST: 
+
+1)  usare fr3_EE per pianificare invece di fr3_hand
+2) capire perché apriltag ha errore così elevato 
+
+
+Saved fr3_link0 <- tag transform to /workspace/data/table_apriltag_transform.json
+[[ 0.056972 -0.99836   0.005596  0.609519]
+ [ 0.998335  0.056918 -0.009369  0.23225 ]
+ [ 0.009035  0.00612   0.99994   0.348553]
+ [ 0.        0.        0.        1.      ]]
+
+Translation: [0.623, 0.253, 0.372]
+
+3) capire quale camera info effettivamente passare
+
+4) aggiungere ostacolo ad altezza 0.36
+
+TO DO: 
+4) to do -- per definire posa target usare camera se oggetto visibile in camera 
+
+
+
+possibile esperimento -- put all boxes in the bowl 
+put red box - wooden box - white box
+
+
+
+----- debug
+
+For request 0989aa95-8fd7-4a09-b66f-2ee73c97a6d6, the orchestrator never received the plan. That UUID does not appear anywhere in its logs.
+The orchestrator itself is currently healthy:
+- Container: running.
+- /vlm_robot_planner: present.
+- /vlm_planner/ready: true.
+- Other plans immediately before and after this failure were acknowledged and executed.
+So this occurrence was loss of the one-shot injection message?not a lost ACK. The temporary publisher discovered the subscriber, published once, waited for an ACK, and exited. DDS graph discovery alone does not guarantee that the writer-reader connection is fully ready for reliable delivery.
+How to check
+Replace REQUEST_ID with the UUID from the error.
+Check whether the orchestrator received it:
+REQUEST_ID="0989aa95-8fd7-4a09-b66f-2ee73c97a6d6"
+
+docker logs --since 30m vlm_ros2_real 2>&1 \
+  | grep -C 5 "$REQUEST_ID"
+Interpretation:
+- No output: injection message never reached the callback.
+- Plan acknowledgement ... accepted=True: plan was accepted; only the ACK was lost.
+- accepted=False: it was explicitly rejected, usually because the node was busy or not ready.
+Follow plan activity live:
+docker logs -f vlm_ros2_real 2>&1 \
+  | grep --line-buffered -E \
+  "Plan acknowledgement|Injected plan|Task completed|task failed|Perception"
+Check the orchestrator and readiness:
+docker exec vlm_ros2_real bash -lc '
+source /opt/ros/humble/setup.bash
+source /workspace/ros2_ws/install/setup.bash
+
+ros2 node list | grep /vlm_robot_planner
+ros2 topic echo /vlm_planner/ready std_msgs/msg/Bool \
+  --once \
+  --qos-reliability reliable \
+  --qos-durability transient_local \
+  --qos-history keep_last \
+  --qos-depth 1
+'
+Check injection and ACK endpoints:
+docker exec vlm_ros2_real bash -lc '
+source /opt/ros/humble/setup.bash
+source /workspace/ros2_ws/install/setup.bash
+
+ros2 topic info -v /vlm_planner/inject_plan
+ros2 topic info -v /vlm_planner/plan_ack
+'
+Monitor ACK messages directly:
+docker exec vlm_ros2_real bash -lc '
+source /opt/ros/humble/setup.bash
+source /workspace/ros2_ws/install/setup.bash
+
+ros2 topic echo /vlm_planner/plan_ack std_msgs/msg/String \
+  --qos-reliability reliable \
+  --qos-durability transient_local \
+  --qos-history keep_last \
+  --qos-depth 10
+  
+  
+  
+  
+  ------
+  /perception/dino_annotated_image
+'
