@@ -23,7 +23,7 @@ from PIL import Image as PilImage
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
-_RUNS_DIR = _REPO_ROOT / "data" / "ros2_runs"
+_RUNS_DIR = _REPO_ROOT / "data" / "real_runs"
 
 
 def _run_dir(task: str, parent: Path | None) -> Path:

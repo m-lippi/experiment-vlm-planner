@@ -37,7 +37,7 @@ _APPROACH_LATERAL_M  = 0.15   # lateral clearance before grasp for side
 # On real robot (Phase 2+): detected_z from RealSense depth → same formula applies.
 # finger_tips = detected_z + _GRASP_OFFSET_Z_M - 0.133
 _USING_FR3_EE = os.environ.get("VLM_ROBOT", "panda") == "fr3"
-_GRASP_OFFSET_Z_M = 0.01 if _USING_FR3_EE else 0.11
+_GRASP_OFFSET_Z_M = 0.015 if _USING_FR3_EE else 0.11
 
 # Side grasp: Ry(90°) × Rz(180°) body rotation.
 # EEF Z = [1,0,0] (world +X) — gripper approaches from behind along +X, unchanged.
@@ -191,12 +191,20 @@ class PickPrimitive(ArmPrimitive):
 
         # ── 4. Close gripper ───────────────────────────────────────────────
         if not self.close_gripper():
-            self._log("close_gripper failed — object may have slipped")
+            self._log("close_gripper failed — no object detected between fingers")
+            return False
 
         
 
         # ── 4b. Notify MoveIt2 ─────────────────────────────────────────────
-        self.attach_object(object_name, support_surface=support_surface)
+        # In simulation the object must be attached before the lift so the
+        # physics model follows the gripper. On the real robot, defer the
+        # MoveIt attachment until the cube is clear of the table: an object
+        # resting on its support surface otherwise makes the retreat start
+        # state colliding even when its collision dimensions are exact.
+        attach_before_retreat = self._attach is not None
+        if attach_before_retreat:
+            self.attach_object(object_name, support_surface=support_surface)
 
         # ── 4c. Simulation-only: physics attachment (BoeingAttach) ─────────
         if self._attach is not None:
@@ -219,10 +227,14 @@ class PickPrimitive(ArmPrimitive):
         retreat = self._make_side_retreat_pose(grasp_pose) if grasp_mode == "side" else pre_grasp
         if not self.move_to_pose_cartesian(retreat):
             self._log("retreat failed — object may be stuck")
-            self.detach_object(object_name)
+            if attach_before_retreat:
+                self.detach_object(object_name)
             if self._attach is not None:
                 self._attach.detach()
             return False
+
+        if not attach_before_retreat:
+            self.attach_object(object_name, support_surface=support_surface)
 
         self._log(f"pick('{object_name}', mode={grasp_mode}): SUCCESS")
         return True

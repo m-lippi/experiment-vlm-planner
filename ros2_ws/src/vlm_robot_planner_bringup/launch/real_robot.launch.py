@@ -10,6 +10,7 @@ its trajectory through that command topic.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 
@@ -37,6 +38,78 @@ if _CAM_CFG_PATH.exists():
             _cam_cfg = json.load(config_file)
     except (OSError, ValueError) as error:
         print(f"[launch] WARNING: cannot read {_CAM_CFG_PATH.name}: {error}")
+
+
+_TAG_TF_PATH = _CAM_CFG_PATH.with_name("table_apriltag_transform.json")
+
+
+def _rotation_matrix_to_quaternion(rotation):
+    """Return normalized (x, y, z, w) for a 3x3 rotation matrix."""
+    r00, r01, r02 = rotation[0]
+    r10, r11, r12 = rotation[1]
+    r20, r21, r22 = rotation[2]
+    trace = r00 + r11 + r22
+
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        qw = 0.25 * scale
+        qx = (r21 - r12) / scale
+        qy = (r02 - r20) / scale
+        qz = (r10 - r01) / scale
+    elif r00 > r11 and r00 > r22:
+        scale = math.sqrt(1.0 + r00 - r11 - r22) * 2.0
+        qw = (r21 - r12) / scale
+        qx = 0.25 * scale
+        qy = (r01 + r10) / scale
+        qz = (r02 + r20) / scale
+    elif r11 > r22:
+        scale = math.sqrt(1.0 + r11 - r00 - r22) * 2.0
+        qw = (r02 - r20) / scale
+        qx = (r01 + r10) / scale
+        qy = 0.25 * scale
+        qz = (r12 + r21) / scale
+    else:
+        scale = math.sqrt(1.0 + r22 - r00 - r11) * 2.0
+        qw = (r10 - r01) / scale
+        qx = (r02 + r20) / scale
+        qy = (r12 + r21) / scale
+        qz = 0.25 * scale
+
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if norm == 0.0:
+        raise ValueError("rotation matrix produced a zero quaternion")
+    return qx / norm, qy / norm, qz / norm, qw / norm
+
+
+def _load_table_apriltag_tf():
+    """Load the saved T_base_tag transform for a static TF broadcaster."""
+    if not _TAG_TF_PATH.exists():
+        print(f"[launch] WARNING: {_TAG_TF_PATH.name} not found; AprilTag TF disabled")
+        return None
+
+    try:
+        with _TAG_TF_PATH.open(encoding="utf-8") as config_file:
+            config = json.load(config_file)
+        transform = config["tag_to_base"]
+        if len(transform) != 4 or any(len(row) != 4 for row in transform):
+            raise ValueError("tag_to_base must be a 4x4 matrix")
+
+        translation = tuple(float(transform[index][3]) for index in range(3))
+        rotation = [
+            [float(transform[row][column]) for column in range(3)]
+            for row in range(3)
+        ]
+        quaternion = _rotation_matrix_to_quaternion(rotation)
+        parent = str(config.get("parent_frame", "fr3_link0"))
+        child = str(
+            config.get("child_frame", f"apriltag_{int(config.get('tag_id', 0))}")
+        )
+        if not parent or not child or parent == child:
+            raise ValueError("invalid parent_frame/child_frame")
+        return translation, quaternion, parent, child
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        print(f"[launch] WARNING: cannot read {_TAG_TF_PATH.name}: {error}")
+        return None
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -251,6 +324,30 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[{"use_sim_time": False}],
         output="screen",
     )
+    table_apriltag_tf = _load_table_apriltag_tf()
+    table_apriltag_tf_nodes = []
+    if table_apriltag_tf is not None:
+        translation, quaternion, parent_frame, child_frame = table_apriltag_tf
+        table_apriltag_tf_nodes.append(
+            Node(
+                package="tf2_ros",
+                executable="static_transform_publisher",
+                name="static_tf_fr3_to_table_apriltag",
+                arguments=[
+                    "--x", str(translation[0]),
+                    "--y", str(translation[1]),
+                    "--z", str(translation[2]),
+                    "--qx", str(quaternion[0]),
+                    "--qy", str(quaternion[1]),
+                    "--qz", str(quaternion[2]),
+                    "--qw", str(quaternion[3]),
+                    "--frame-id", parent_frame,
+                    "--child-frame-id", child_frame,
+                ],
+                parameters=[{"use_sim_time": False}],
+                output="screen",
+            )
+        )
     move_group = Node(
         package="moveit_ros_move_group",
         executable="move_group",
@@ -311,6 +408,7 @@ def generate_launch_description() -> LaunchDescription:
             realsense_node,
             static_tf,
             static_tf_overview,
+            *table_apriltag_tf_nodes,
             move_group,
             rviz,
             orchestrator,

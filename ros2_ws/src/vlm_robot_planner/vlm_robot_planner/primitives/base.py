@@ -119,11 +119,10 @@ _TOP_DOWN_QUAT = Quaternion(x=0.996, y=0.014, z=0.086, w=-0.015)
 
 
 # ── W5: AttachedCollisionObject parameters ────────────────────────────────────
-# Conservative geometry for any grasped object — NOT specific to scene objects.
-# Real robot Phase 2: replace with object geometry from PerceptionModule.
-# The cylinder approximates "something held in the gripper" in a general way.
-_HELD_OBJ_RADIUS = 0.04   # m — covers graspable objects up to ~8 cm diameter
-_HELD_OBJ_HEIGHT = 0.14   # m — covers objects up to ~14 cm tall
+# Geometry of the cube used in the real tabletop experiment. The previous
+# generic 8 cm x 14 cm cylinder extended far below this small object and put the
+# planning scene in collision with the table immediately after attachment.
+_HELD_OBJ_SIZE = 0.03     # m — 3 cm cube
 # Object centre offset in hand frame (+Z = toward fingertips/object).
 _HELD_OBJ_Z_IN_HAND = 0.13   # m — in hand +Z (toward object, away from arm)
 
@@ -357,18 +356,14 @@ class ArmPrimitive:
     ) -> None:
         """Notify MoveIt2 that the robot is now holding an object (W5).
 
-        Adds a conservative cylinder attached to panda_hand so MoveIt2
+        Adds the experiment's 3 cm cube attached to the robot hand so MoveIt2
         includes the held object in all subsequent collision checks.
 
         Args:
             object_id:       PDDL/Gazebo name of the grasped object.
-            support_surface: Name of the MoveIt2 collision object the item was
-                             resting on (e.g. "table", "shelf_b").  Added to
-                             touch_links so MoveIt2 doesn't block the initial
-                             lift due to ACO-surface overlap at grasp height.
-
-        Phase 2: replace the fixed cylinder geometry with the actual object
-        shape from the PerceptionModule (e.g. from a point cloud segment).
+            support_surface: Retained for API compatibility. World collision
+                             object IDs cannot be placed in ``touch_links``;
+                             that field accepts robot links only.
         """
         from moveit_msgs.msg import AttachedCollisionObject, CollisionObject
         from shape_msgs.msg import SolidPrimitive
@@ -379,21 +374,21 @@ class ArmPrimitive:
         aco.object.id              = object_id
         aco.object.header.frame_id = _HELD_OBJ_LINK
 
-        cyl            = SolidPrimitive()
-        cyl.type       = SolidPrimitive.CYLINDER
-        cyl.dimensions = [_HELD_OBJ_HEIGHT, _HELD_OBJ_RADIUS]
+        cube            = SolidPrimitive()
+        cube.type       = SolidPrimitive.BOX
+        cube.dimensions = [_HELD_OBJ_SIZE, _HELD_OBJ_SIZE, _HELD_OBJ_SIZE]
 
         p              = _Pose()
         p.position.z   = _HELD_OBJ_Z_IN_HAND
         p.orientation.w = 1.0
 
-        aco.object.primitives      = [cyl]
+        aco.object.primitives      = [cube]
         aco.object.primitive_poses = [p]
         aco.object.operation       = CollisionObject.ADD
         # Allow physical contact with gripper and wrist links.
-        gripper_links = _TOUCH_LINKS
-        surface_links = [support_surface] if support_surface else []
-        aco.touch_links = gripper_links + surface_links
+        # touch_links may contain robot links only. A world object such as
+        # "table" must not be added here; doing so does not allow table contact.
+        aco.touch_links = list(_TOUCH_LINKS)
         self._held_object_id = object_id          # instance-level (compat)
         ArmPrimitive._HELD_ACO_ID = object_id     # class-level (shared with place)
         self._aco_pub.publish(aco)

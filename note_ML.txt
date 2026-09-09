@@ -12,6 +12,10 @@ docker ps
 ros2 run  tf2_ros tf2_echo fr3_link0 fr3_hand
 
 docker logs -f vlm_ros2_real 2>&1 | grep --line-buffered -E 'vlm_robot_planner|MoveIt2|Perception|Primitive|Orchestrator'
+
+docker logs -f vlm_ros2_real 2>&1 | rg "detected|Primitive|orchestrator|gripper"
+
+(2&1 prende stdout e stderr)
 	
 TO TEST:  
 
@@ -115,11 +119,9 @@ ros2 run tf2_ros tf2_echo fr3_link0 camera_color_optical_frame
  STATO: primitive funzionano, le due camere girano, esiste tf tree da link0 a camera_link (wrist)
 overview_camera/overview_camera/color/image_raw
 
-
-
-LAVORARE SU 
-1) OKK --- rimpiazzare _capture_scene.py --- setup
-
+----------------------------------
+CALIBRATION
+----------------------------------
 
 Implemented the AprilTag-based calibration workflow.
 New scripts:
@@ -130,11 +132,11 @@ New scripts:
   - data/overview_camera_pose.json
 Usage:
 # Keep the robot stationary and show the tag to the wrist camera.
-python3 scripts/save_table_apriltag_transform.py --tag-id 0 --tag-size 0.080
+python3 scripts/save_table_apriltag_transform.py --tag-id 0 --tag-size 0.160
 
 
 # Without moving the tag, show it to the overview camera.
-python3 scripts/calibrate_overview_camera_apriltag.py --tag-id 0 --tag-size 0.080
+python3 scripts/calibrate_overview_camera_apriltag.py --tag-id 0 --tag-size 0.16
 
 
   --tag-id 0
@@ -204,8 +206,7 @@ MINOR:  rimuovere tempo di attesa di 3 sec
 
 TO TEST: 
 
-1)  usare fr3_EE per pianificare invece di fr3_hand
-2) capire perché apriltag ha errore così elevato 
+2) capire perché apriltag ha errore così elevato -- verificare se meglio con nuovo camera info
 
 
 Saved fr3_link0 <- tag transform to /workspace/data/table_apriltag_transform.json
@@ -216,17 +217,10 @@ Saved fr3_link0 <- tag transform to /workspace/data/table_apriltag_transform.jso
 
 Translation: [0.623, 0.253, 0.372]
 
-3) capire quale camera info effettivamente passare
-
-4) aggiungere ostacolo ad altezza 0.36
 
 TO DO: 
 4) to do -- per definire posa target usare camera se oggetto visibile in camera 
 
-
-
-possibile esperimento -- put all boxes in the bowl 
-put red box - wooden box - white box
 
 
 
@@ -291,4 +285,16 @@ ros2 topic echo /vlm_planner/plan_ack std_msgs/msg/String \
   
   ------
   /perception/dino_annotated_image
+  
+  
+possibile esperimento -- put all boxes in the bowl 
+put red box - wooden box - white box
+put something to eat in the bowl/plate
+inspect the plant
+
+Closed loop con persona che sposta oggetto 
+
+
+  TODO: 
+  -- restituire pick successo se effettivamente prende ogfgetto (controllo su grasp)
 '

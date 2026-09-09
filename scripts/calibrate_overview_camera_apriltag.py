@@ -55,16 +55,30 @@ class OverviewCalibrationNode(Node):
         super().__init__("calibrate_overview_camera_apriltag")
         self.args = args
         self.tag_to_base = tag_to_base
-        self.K: np.ndarray | None = None
-        self.distortion = np.empty(0, dtype=np.float64)
-        self.width: int | None = None
-        self.height: int | None = None
-        self.distortion_model: str | None = None
+        # Color intrinsics are used only for AprilTag PnP.
+        self.color_K: np.ndarray | None = None
+        self.color_distortion = np.empty(0, dtype=np.float64)
+        self.color_width: int | None = None
+        self.color_height: int | None = None
+        self.color_frame: str | None = None
+        # Aligned-depth intrinsics are the runtime data product written to
+        # overview_camera_info.json and used to unproject aligned depth.
+        self.depth_K: np.ndarray | None = None
+        self.depth_distortion = np.empty(0, dtype=np.float64)
+        self.depth_width: int | None = None
+        self.depth_height: int | None = None
+        self.depth_distortion_model: str | None = None
+        self.depth_frame: str | None = None
         self.samples: list[np.ndarray] = []
         self.errors: list[float] = []
         self.detector = AprilTagDetector(args.family)
         self.create_subscription(
-            CameraInfo, args.camera_info_topic, self._camera_info, qos_profile_sensor_data
+            CameraInfo, args.color_camera_info_topic,
+            self._color_camera_info, qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            CameraInfo, args.depth_camera_info_topic,
+            self._depth_camera_info, qos_profile_sensor_data,
         )
         self.create_subscription(
             Image, args.image_topic, self._image, qos_profile_sensor_data
@@ -73,25 +87,47 @@ class OverviewCalibrationNode(Node):
 
     @property
     def done(self) -> bool:
-        return len(self.samples) >= self.args.samples
+        return (
+            len(self.samples) >= self.args.samples
+            and self.depth_K is not None
+        )
 
-    def _camera_info(self, msg: CameraInfo) -> None:
+    def _color_camera_info(self, msg: CameraInfo) -> None:
         try:
-            self.K, self.distortion = camera_matrix(msg)
-            self.width, self.height = int(msg.width), int(msg.height)
-            self.distortion_model = msg.distortion_model
+            self.color_K, self.color_distortion = camera_matrix(msg)
+            self.color_width, self.color_height = int(msg.width), int(msg.height)
+            self.color_frame = msg.header.frame_id
         except ValueError as exc:
-            self.get_logger().error(str(exc))
+            self.get_logger().error(f"Invalid color CameraInfo: {exc}")
+
+    def _depth_camera_info(self, msg: CameraInfo) -> None:
+        try:
+            self.depth_K, self.depth_distortion = camera_matrix(msg)
+            self.depth_width, self.depth_height = int(msg.width), int(msg.height)
+            self.depth_distortion_model = msg.distortion_model
+            self.depth_frame = msg.header.frame_id
+        except ValueError as exc:
+            self.get_logger().error(f"Invalid aligned-depth CameraInfo: {exc}")
 
     def _image(self, msg: Image) -> None:
-        if self.done or self.K is None:
+        if len(self.samples) >= self.args.samples or self.color_K is None:
             return
         try:
-            corners = self.detector.corners(ros_image_to_gray(msg), self.args.tag_id)
+            gray = ros_image_to_gray(msg)
+            if (gray.shape[1], gray.shape[0]) != (
+                self.color_width, self.color_height
+            ):
+                raise ValueError(
+                    f"color image size {(gray.shape[1], gray.shape[0])} does not "
+                    "match color CameraInfo size "
+                    f"{(self.color_width, self.color_height)}"
+                )
+            corners = self.detector.corners(gray, self.args.tag_id)
             if corners is None:
                 return
             camera_from_tag, error = estimate_camera_from_tag(
-                corners, self.args.tag_size, self.K, self.distortion
+                corners, self.args.tag_size,
+                self.color_K, self.color_distortion,
             )
             if error > self.args.max_reprojection_error:
                 self.get_logger().warning(
@@ -126,8 +162,21 @@ def parse_args() -> argparse.Namespace:
         default="/overview_camera/overview_camera/color/image_raw",
     )
     parser.add_argument(
-        "--camera-info-topic",
+        "--color-camera-info-topic", "--camera-info-topic",
+        dest="color_camera_info_topic",
+        #TMP 
+        default="/overview_camera/overview_camera/color/camera_info",
+        # default="/overview_camera/overview_camera/aligned_depth_to_color/camera_info",
+        help=(
+            "CameraInfo matching --image-topic. The AprilTag is detected in the "
+            "color image, so this must be the color CameraInfo, not the aligned "
+            "depth CameraInfo."
+        ),
+    )
+    parser.add_argument(
+        "--depth-camera-info-topic",
         default="/overview_camera/overview_camera/aligned_depth_to_color/camera_info",
+        help="CameraInfo saved for aligned-depth runtime unprojection",
     )
     parser.add_argument(
         "--tag-transform",
@@ -201,7 +250,18 @@ def main() -> int:
         if not node.done:
             print(
                 f"[ERROR] Timed out with {len(node.samples)}/{args.samples} valid samples. "
-                "Check topics, tag ID/size, lighting, and tag visibility.",
+                "Check the color image/CameraInfo and aligned-depth CameraInfo "
+                "topics, tag ID/size, lighting, and tag visibility.",
+                file=sys.stderr,
+            )
+            return 1
+        if (node.depth_width, node.depth_height) != (
+            node.color_width, node.color_height
+        ):
+            print(
+                "[ERROR] aligned-depth CameraInfo size "
+                f"{(node.depth_width, node.depth_height)} does not match color "
+                f"image geometry {(node.color_width, node.color_height)}.",
                 file=sys.stderr,
             )
             return 1
@@ -213,11 +273,14 @@ def main() -> int:
         table_z = float(tag_to_base[2, 3] if args.table_z is None else args.table_z)
 
         info = {
-            "K": node.K.tolist(),
-            "width": node.width,
-            "height": node.height,
-            "D": node.distortion.tolist(),
-            "distortion_model": node.distortion_model,
+            "K": node.depth_K.tolist(),
+            "width": node.depth_width,
+            "height": node.depth_height,
+            "D": node.depth_distortion.tolist(),
+            "distortion_model": node.depth_distortion_model,
+            "frame_id": node.depth_frame,
+            "camera_info_topic": args.depth_camera_info_topic,
+            "purpose": "aligned_depth_to_color_unprojection",
         }
         setup = {
             "x": float(translation[0]),
@@ -233,13 +296,16 @@ def main() -> int:
             "parent_frame": "fr3_link0",
             "child_frame": "overview_camera_optical_frame",
             "calibration_tag_id": args.tag_id,
+            "calibration_image_topic": args.image_topic,
+            "calibration_camera_info_topic": args.color_camera_info_topic,
+            "calibration_camera_frame": node.color_frame,
             "samples": len(node.samples),
             "mean_reprojection_error_px": float(np.mean(node.errors)),
         }
         write_json(args.info_output, info)
         write_json(args.setup_output, setup)
         write_json(args.pose_output, pose)
-        print(f"[OK] Saved intrinsics to {args.info_output}")
+        print(f"[OK] Saved aligned-depth intrinsics to {args.info_output}")
         print(f"[OK] Saved launch setup to {args.setup_output}")
         print(f"[OK] Saved matrix pose to {args.pose_output}")
         print(json.dumps(setup, indent=2))

@@ -337,13 +337,16 @@ python3 scripts/save_table_apriltag_transform.py \
 python3 scripts/calibrate_overview_camera_apriltag.py --tag-id 0
 ```
 
-Step 1 writes `data/table_apriltag_transform.json`. Step 2 reads intrinsics
-from `/overview_camera/overview_camera/aligned_depth_to_color/camera_info` and
-writes `data/overview_camera_info.json`, `data/overview_camera_setup.json`, and
-`data/overview_camera_pose.json`. By default, the tag origin's Z coordinate is
-used as `z_table`; pass `--table-z <metres>` when the tag is not flush with the
-table surface. Restart `real_robot.launch.py` after step 2 so it reloads the
-static overview-camera transform.
+Step 1 writes `data/table_apriltag_transform.json`. For step 2, AprilTag PnP
+uses `/overview_camera/overview_camera/color/camera_info`, matching the color
+image containing the detected corners. The script separately reads
+`/overview_camera/overview_camera/aligned_depth_to_color/camera_info` and saves
+those runtime depth intrinsics in `data/overview_camera_info.json`. It also
+writes `data/overview_camera_setup.json` and `data/overview_camera_pose.json`.
+By default, the tag origin's Z coordinate is used as `z_table`; pass
+`--table-z <metres>` when the tag is not flush with the table surface. Restart
+`real_robot.launch.py` after step 2 so it reloads the static overview-camera
+transform.
 
 #### ROS 2 RGB-D capture and planning
 

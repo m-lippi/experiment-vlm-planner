@@ -24,6 +24,7 @@ remains responsive during the (slow) GPU model load.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import os
 import threading
@@ -97,8 +98,8 @@ class Orchestrator(Node):
         # ── Oracle + simulated attachment ─────────────────────────────────
         # Skip Gazebo services in real-robot mode (no Gazebo running).
         self.declare_parameter("use_sim", True)
-        _use_sim = self.get_parameter("use_sim").value
-        if _use_sim:
+        self._use_sim = bool(self.get_parameter("use_sim").value)
+        if self._use_sim:
             from vlm_robot_planner.primitives.base import BASE_FRAME as _BF
             self._oracle  = GazeboOracle(node=self, reference_frame=_BF)
             self._attach  = GazeboAttach(node=self)
@@ -248,10 +249,9 @@ class Orchestrator(Node):
     def _setup_planning_scene(self) -> None:
         """Add static environment geometry to MoveIt2's planning scene.
 
-        Robot base is at world z=0.77 m (on the table surface).
-        In panda_link0 frame:
-          table surface  →  z = 0.00 m
-          solid table body → z = -0.77 m … 0.00 m  (centre z = -0.385 m, height = 0.77 m)
+        Simulation keeps its original table model. In real-robot mode, the
+        table top is ``z_table`` from data/overview_camera_setup.json and the
+        collision box spans z=0..z_table in fr3_link0.
         """
         from moveit_msgs.msg import CollisionObject
         from shape_msgs.msg import SolidPrimitive
@@ -267,12 +267,40 @@ class Orchestrator(Node):
 
         box = SolidPrimitive()
         box.type = SolidPrimitive.BOX
-        box.dimensions = [1.20, 1.00, 0.77]
 
         pose = Pose()
-        pose.position.x = 0.30   # table centre: world x=0.50 - robot x=0.20 = 0.30 m
-        pose.position.y = 0.00
-        pose.position.z = -0.385
+        if self._use_sim:
+            box.dimensions = [1.20, 1.00, 0.77]
+            pose.position.x = 0.30
+            pose.position.y = 0.00
+            pose.position.z = -0.385
+            table_description = "simulation table"
+        else:
+            setup_path = os.path.join(
+                _REPO_ROOT, "data", "overview_camera_setup.json"
+            )
+            try:
+                with open(setup_path, encoding="utf-8") as stream:
+                    z_table = float(json.load(stream)["z_table"])
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    f"Cannot load real table height from {setup_path}: {exc}"
+                ) from exc
+            if not math.isfinite(z_table) or z_table <= 0.0:
+                raise RuntimeError(
+                    f"Invalid z_table={z_table!r} in {setup_path}; expected metres > 0"
+                )
+
+            # Real table in fr3_link0: 0.8 m along X, 1.2 m along Y,
+            # with its top surface at the calibrated z_table value.
+            box.dimensions = [0.80, 1.20, z_table]
+            pose.position.x = 0.60
+            pose.position.y = 0.00
+            pose.position.z = z_table / 2.0
+            table_description = (
+                f"real table: centre=(0.600, 0.000, {z_table / 2.0:.3f}), "
+                f"size=(0.800, 1.200, {z_table:.3f}) m"
+            )
         pose.orientation.w = 1.0
 
         co.primitives      = [box]
@@ -284,7 +312,9 @@ class Orchestrator(Node):
             pub.publish(co)
             _time.sleep(0.1)
 
-        self.get_logger().info("Planning scene: table collision object added.")
+        self.get_logger().info(
+            f"Planning scene: {table_description} collision object added in {_BF}."
+        )
 
     def _init_primitives(self) -> None:
         """Initialise MoveIt2Client and wire up all primitives."""

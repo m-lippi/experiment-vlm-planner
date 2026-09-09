@@ -122,6 +122,8 @@ services:
     environment:
       - ROS_MASTER_URI=http://${ROBOT_IP:-192.168.131.1}:11311
       - ROS_IP=${LOCAL_IP}
+      - FAIL_ON_EMPTY_GRASP=${FAIL_ON_EMPTY_GRASP:-false}
+      - EMPTY_GRASP_WIDTH_THRESHOLD=${EMPTY_GRASP_WIDTH_THRESHOLD:-0.005}
     volumes:
       - ../scripts:/workspace/scripts:ro
     entrypoint: ["/bin/bash", "-c"]
@@ -131,4 +133,6 @@ services:
     - source /opt/ros/noetic/setup.bash &&
       source /opt/ros1_ws/devel/setup.bash &&
       exec python3 -u /workspace/scripts/ros1_gripper_adapter.py
+      _fail_on_empty_grasp:=$${FAIL_ON_EMPTY_GRASP}
+      _empty_grasp_width_threshold:=$${EMPTY_GRASP_WIDTH_THRESHOLD}
     restart: unless-stopped

@@ -23,6 +23,7 @@ _TABLE_VIEW_JOINTS = [0.0, -0.70, 0.0, -2.10, 0.0, 1.40, 0.7854]
 _J0_MAX = 1.30   # ±75° clamp
 
 
+_APPROACH_X_M   = 0.07   # x clearance above object
 _APPROACH_HEIGHT_M   = 0.25   # vertical clearance above object
 
 
@@ -44,7 +45,7 @@ class LookAtPrimitive(ArmPrimitive):
         
         pos = pose_data["position"]
         obs = Pose()
-        obs.position.x = pos.x; obs.position.y = pos.y
+        obs.position.x = pos.x - _APPROACH_X_M; obs.position.y = pos.y
         obs.position.z = pos.z + _APPROACH_HEIGHT_M
         obs.orientation = _TOP_DOWN_QUAT
         
@@ -52,6 +53,8 @@ class LookAtPrimitive(ArmPrimitive):
         self._log(f"look_at('{target_name}'): DINO pose "
             f"({pos.x:.3f},{pos.y:.3f},{pos.z:.3f})")
 
+        self._log(f"look_at('{target_name}'): Target pose "
+            f"({obs.position.x:.3f},{obs.position.y:.3f},{obs.position.z:.3f})")
 
         if not self.move_to_pose_cartesian(obs):
             self._log("look at approach failed — aborting look at")

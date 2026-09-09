@@ -35,6 +35,10 @@ class GripperAdapter:
         /franka_gripper/grasp
             franka_gripper/GraspAction
 
+    When ``~fail_on_empty_grasp`` is enabled, the allowed inner grasp
+    tolerance is limited so a final width below
+    ``~empty_grasp_width_threshold`` cannot be reported as a successful grasp.
+
     Opening commands are converted into:
 
         /franka_gripper/move
@@ -88,6 +92,16 @@ class GripperAdapter:
         self._epsilon_outer = float(
             rospy.get_param("~epsilon_outer", 0.05)
         )
+
+        self._fail_on_empty_grasp = bool(
+            rospy.get_param("~fail_on_empty_grasp", False)
+        )
+
+        self._empty_grasp_width_threshold = float(
+            rospy.get_param("~empty_grasp_width_threshold", 0.005)
+        )
+        if self._empty_grasp_width_threshold < 0.0:
+            raise ValueError("~empty_grasp_width_threshold must be non-negative")
 
         # Maximum allowed command width.
         self._max_width = float(
@@ -231,6 +245,12 @@ class GripperAdapter:
             "  Epsilon: inner=%.4f outer=%.4f",
             self._epsilon_inner,
             self._epsilon_outer,
+        )
+
+        rospy.loginfo(
+            "  Empty-grasp check: %s (closed threshold %.4f m)",
+            "enabled" if self._fail_on_empty_grasp else "disabled",
+            self._empty_grasp_width_threshold,
         )
 
     # ================================================================
@@ -445,8 +465,21 @@ class GripperAdapter:
             goal.width = width
             goal.speed = self._speed
             goal.force = self._force
+
+            # Franka accepts a grasp when the achieved width lies in
+            # [goal.width - epsilon.inner, goal.width + epsilon.outer].  The
+            # old 5 cm inner tolerance allowed a fully closed gripper to count
+            # as success for the normal 2 cm close command.  Limit that
+            # tolerance so an achieved width below the configured empty
+            # threshold makes the underlying GraspAction fail.
+            epsilon_inner = self._epsilon_inner
+            if self._fail_on_empty_grasp:
+                epsilon_inner = min(
+                    epsilon_inner,
+                    max(0.0, width - self._empty_grasp_width_threshold),
+                )
             goal.epsilon = GraspEpsilon(
-                inner=self._epsilon_inner,
+                inner=epsilon_inner,
                 outer=self._epsilon_outer,
             )
             rospy.loginfo(

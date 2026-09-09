@@ -30,6 +30,8 @@ import time
 import uuid
 from pathlib import Path
 
+import numpy as np
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
@@ -583,7 +585,11 @@ def main(real_ros2_default: bool = False) -> None:
     _ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     _world_tag = "real_ros2" if args.real_ros2 else getattr(args, "world", "unknown")
     _task_tag  = args.task[:30].replace(" ", "_").replace("/", "-")
-    _RUN_DIR   = _REPO_ROOT / "data" / "runs" / f"{_ts}_{_world_tag}_{_task_tag}"
+    _runs_root = "real_runs" if args.real_ros2 else "runs"
+    _RUN_DIR = (
+        _REPO_ROOT / "data" / _runs_root
+        / f"{_ts}_{_world_tag}_{_task_tag}"
+    )
     _RUN_DIR.mkdir(parents=True, exist_ok=True)
     with open(str(_RUN_DIR / "run_info.txt"), "w") as _rf:
         _rf.write(f"timestamp: {_ts}\n")
@@ -660,6 +666,39 @@ def main(real_ros2_default: bool = False) -> None:
         else:
             image_vlm = image   # fallback to wrist cam
         _using_overview = (_ov_path.exists() and _OV_K is not None)
+
+        # The fixed extrinsic was estimated from the color image and therefore
+        # uses color/camera_info.  Runtime 3-D unprojection, however, consumes
+        # aligned_depth_to_color/image_raw and must use the CameraInfo captured
+        # from that aligned-depth stream.  Do not reuse the calibration K here,
+        # even though RealSense commonly publishes identical matrices for both.
+        _ov_depth_K = _OV_K
+        if args.real_ros2 and _using_overview:
+            _runtime_info = args.ros2_capture_dir / "overview_camera_info.json"
+            try:
+                with _runtime_info.open(encoding="utf-8") as _stream:
+                    _runtime_data = json.load(_stream)
+                _candidate_K = np.asarray(_runtime_data["K"], dtype=float)
+                _info_size = (
+                    int(_runtime_data["width"]), int(_runtime_data["height"])
+                )
+                if _candidate_K.shape != (3, 3) or not np.isfinite(_candidate_K).all():
+                    raise ValueError("K is not a finite 3x3 matrix")
+                if _info_size != image_vlm.size:
+                    raise ValueError(
+                        f"CameraInfo size {_info_size} does not match color image "
+                        f"size {image_vlm.size}"
+                    )
+                _ov_depth_K = _candidate_K
+                print(
+                    "[INFO] Overview depth K from current "
+                    "aligned_depth_to_color/camera_info"
+                )
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                # A stale color K must not be used with depth merely because it
+                # happens to have the same dimensions.
+                _ov_depth_K = None
+                print(f"[WARN] Invalid runtime overview depth CameraInfo: {exc}")
 
         # Persist last scan-pose image + calibration for place location detection.
         # When arm is holding an object, the camera view is distorted by the arm.
@@ -887,7 +926,7 @@ def main(real_ros2_default: bool = False) -> None:
                 # Select primary camera source for DINO
                 if _using_overview and _OV_K is not None and _OV_CTB is not None:
                     det_img_all   = image_vlm   # scene_overview.png — full workspace view
-                    det_K_all     = _OV_K
+                    det_K_all     = _ov_depth_K
                     det_ctb_all   = _OV_CTB
                     src_label_all = "overview"
                 else:
