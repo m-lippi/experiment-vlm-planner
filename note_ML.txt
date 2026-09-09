@@ -17,6 +17,19 @@ docker logs -f vlm_ros2_real 2>&1 | rg "detected|Primitive|orchestrator|gripper"
 
 (2&1 prende stdout e stderr)
 	
+	
+	
+COMMANDSSSS
+----------------
+	
+bin/start_real.sh --preview-seconds 0 --fail-on-empty-grasp
+
+	
+	
+	
+	
+	
+	
 TO TEST:  
 
  0 -- sync
@@ -71,46 +84,7 @@ bin/run_test_primitives.sh
  Nota: non si usano + i seguenti topic
     "/wrist_camera/image_raw",
     "/overview_camera/image_raw",
- 
-OLD: Per prendere seriale camere usare: (non serve)
-source .venv/bin/activate
-python scripts/capture_and_plan.py --list
 
-
-The overview camera must be calibrated once after mounting. The calibration stores the camera pose relative to `panda_link0` in `data/overview_camera_setup.json`; `real_robot.launch.py` reads this file automatically on every subsequent launch.
-
-```bash
-source .venv/bin/activate
-python scripts/setup_overview_camera.py --serial <OVERVIEW_SERIAL>
-```
- 
- Al momento in _capture cerca la trasformata: 
-lookup_transform(
-    "panda_link0",                 # target
-    "wrist_camera_optical_frame",  # source
-    Time(),
-)
-
-It is saved as cam_to_base in data/camera_pose.json.
-For the real FR3 setup, this lookup is probably failing or using stale data because it should instead resemble:
-lookup_transform(
-    "fr3_link0",
-    "camera_color_optical_frame",
-    Time(),
-)
-
-
-The actual camera frame must be verified from:
-ros2 topic echo /camera/color/image_raw/header --once
-Then test whether the complete TF chain exists:
-docker exec -it vlm_ros2_real bash
-source /opt/ros/humble/setup.bash
-ros2 run tf2_ros tf2_echo fr3_link0 camera_color_optical_frame
-
--- capire trasformata  "world", "fr3_link0" in real_robot.launc
-
- - rimpiazzare setup camera con apriltag
- 
  
  
  NOTE: ora pubblica come overview_camera/overview_camera/color/image_raw
@@ -132,6 +106,9 @@ New scripts:
   - data/overview_camera_pose.json
 Usage:
 # Keep the robot stationary and show the tag to the wrist camera.
+
+
+
 python3 scripts/save_table_apriltag_transform.py --tag-id 0 --tag-size 0.160
 
 
@@ -177,6 +154,11 @@ bin/capture_and_plan_ros2.sh \
  Created the real-world ROS 2 closed-loop equivalent.
 Run it with:
 bin/run_loop_ros2.sh "pick the red box and place in the bowl" --confirm-actions
+
+
+
+
+
 Added:
 - [run_loop_ros2_host.py](/home/alexis-martinez/Desktop/real-robot/scripts/run_loop_ros2_host.py)
 - [run_loop_ros2.sh](/home/alexis-martinez/Desktop/real-robot/bin/run_loop_ros2.sh)

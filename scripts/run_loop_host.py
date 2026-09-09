@@ -2,8 +2,9 @@
 """
 run_loop_host.py — Closed-loop task execution (HOST side).
 
-Implements the closed-loop architecture:
-  [scan] -> [capture] -> [VLM next step] -> [inject] -> [wait complete] -> repeat
+Implements two closed-loop policies:
+  default: [capture] -> [VLM verify/replan] -> [inject] -> repeat
+  --replan-on-failure-only: [VLM full plan] -> [execute cached steps]; replan on failure
 
 Each iteration:
   1. Pre-scan: move arm to scan pose via _pre_scan.py (wrist camera view)
@@ -338,6 +339,7 @@ def _annotate_handled_objects(
     ci_path = Path(data_dir) / info_file
     cp_path = Path(data_dir) / pose_file
 
+    print(f"[LOOP] Annotating ") 
     K, cam_to_base, R, t = None, None, None, None
     if ci_path.exists() and cp_path.exists():
         try:
@@ -358,6 +360,7 @@ def _annotate_handled_objects(
 
     # ── 1. Small cross at each projected object position ─────────────────────
     if R is not None:
+        print(f"[LOOP] Annotating cross") 
         for i, (name, (px, py)) in enumerate(placed_at.items(), 1):
             p_cam = R @ np.array([px, py, 0.025]) + t
             if p_cam[2] <= 0.05:
@@ -532,6 +535,14 @@ def main(real_ros2_default: bool = False) -> None:
         help="Require y/yes confirmation immediately before injecting each action",
     )
     parser.add_argument(
+        "--replan-on-failure-only",
+        action="store_true",
+        help=(
+            "Reuse the remaining steps of the current VLM plan after a successful "
+            "action; call the VLM again only after an action fails"
+        ),
+    )
+    parser.add_argument(
         "--real-ros2", action="store_true", default=real_ros2_default,
         help="Use calibrated real-camera ROS 2 RGB-D topics; disable Gazebo lookup",
     )
@@ -561,6 +572,12 @@ def main(real_ros2_default: bool = False) -> None:
 
     execution_mode = "ENABLED" if args.execute else "DISABLED (observation only)"
     print(f"[LOOP] Robot execution: {execution_mode}")
+    planning_mode = (
+        "cached plan; VLM replans only after failure"
+        if args.replan_on_failure_only
+        else "VLM verifies/replans before every action"
+    )
+    print(f"[LOOP] Planning policy: {planning_mode}")
 
     print("[LOOP] Loading VLM (Qwen3-VL-8B-Instruct)…")
     from vlm.planner import VLMPlanner
@@ -596,6 +613,7 @@ def main(real_ros2_default: bool = False) -> None:
         _rf.write(f"world:     {_world_tag}\n")
         _rf.write(f"task:      {args.task}\n")
         _rf.write(f"execute:   {args.execute}\n")
+        _rf.write(f"replan_on_failure_only: {args.replan_on_failure_only}\n")
     print(f"[LOOP] Run dir: {_RUN_DIR.relative_to(_REPO_ROOT)}")
 
     # Overview camera calibration — computed once from world file (camera is static)
@@ -755,50 +773,77 @@ def main(real_ros2_default: bool = False) -> None:
             print(f"[LOOP] Annotated image [{src}]: {annot_path.name} "
                   f"({len(_placed_at)} marker(s): {list(_placed_at.keys())})")
 
-        # Each iteration: VLM receives the current image and generates the full remaining plan.
-        # If the scene state changed unexpectedly, the plan will differ from the previous iteration.
-        t_vlm = time.time()
-        action_label = "REPLAN" if _last_failed_step else ("PLAN" if not vlm_context else "VERIFY+PLAN")
-        print(f"[LOOP] VLM {action_label} (piano completo rimanente) per: '{args.task}'")
-
-        _prev_plan_steps = [f"{s.primitive}({s.args})" for s in (_current_plan.steps if _current_plan else [])]
-        _prev_current_plan = _current_plan   # saved to inherit grasp_mode if VLM drops it
-
-        # Pass both overview (annotated) + wrist camera to the VLM.
-        # overview → global scene state with handled-object markers
-        # wrist    → close-up of current arm position / grip
-        _vlm_images = [image_for_vlm]
-        if image is not None and image is not image_for_vlm:
-            _vlm_images.append(image)
-
-        _current_plan = vlm.plan_remaining(
-            args.task, _vlm_images, vlm_context,
-            failed_step=_last_failed_step,
-            prior_enrichment=_accumulated_da if _accumulated_da else None,
+        # In the default mode the VLM verifies the scene and regenerates the
+        # remaining plan before every action. With --replan-on-failure-only,
+        # successful actions consume the cached plan locally; a new VLM call is
+        # made only for the initial plan or after execution failure.
+        _prev_plan_steps = []
+        _use_cached_plan = (
+            args.replan_on_failure_only
+            and _current_plan is not None
+            and bool(_current_plan.steps)
+            and _last_failed_step is None
         )
-        _last_failed_step = None
-        vlm_time = time.time() - t_vlm
+        if _use_cached_plan:
+            vlm_time = 0.0
+            print(
+                f"[LOOP] Piano VLM in cache: prossimo di "
+                f"{len(_current_plan.steps)} step rimanenti "
+                "(nessuna nuova inferenza)"
+            )
+        else:
+            t_vlm = time.time()
+            action_label = (
+                "REPLAN" if _last_failed_step
+                else ("PLAN" if not vlm_context else "VERIFY+PLAN")
+            )
+            print(
+                f"[LOOP] VLM {action_label} (piano completo rimanente) "
+                f"per: '{args.task}'"
+            )
 
-        # Preserve grasp_mode from previous plan if VLM omitted it during replanning.
-        # The VLM sometimes drops grasp_mode=side when updating the plan because it
-        # doesn't remember it specified it earlier. We inherit it so the correct
-        # physical grasp is preserved across iterations.
-        if _prev_current_plan and _current_plan.steps:
-            _prev_picks_by_obj = {
-                s.args.get("object", ""): s
-                for s in _prev_current_plan.steps
-                if s.primitive == "pick" and s.args.get("object")
-            }
-            for _s in _current_plan.steps:
-                if _s.primitive == "pick" and "grasp_mode" not in _s.args:
-                    _obj = _s.args.get("object", "")
-                    _prev_pick = _prev_picks_by_obj.get(_obj)
-                    if _prev_pick and "grasp_mode" in _prev_pick.args:
-                        _s.args = dict(_s.args)
-                        _s.args["grasp_mode"] = _prev_pick.args["grasp_mode"]
-                        print(f"[LOOP] Inherited grasp_mode='{_s.args['grasp_mode']}' "
-                              f"for pick('{_obj}') from previous plan")
-        print(f"[LOOP] VLM inference    : {vlm_time:.1f}s")
+            _prev_plan_steps = [
+                f"{s.primitive}({s.args})"
+                for s in (_current_plan.steps if _current_plan else [])
+            ]
+            # Saved to inherit grasp_mode if the VLM drops it during replanning.
+            _prev_current_plan = _current_plan
+
+            # Pass both overview (annotated) + wrist camera to the VLM.
+            # overview → global scene state with handled-object markers
+            # wrist    → close-up of current arm position / grip
+            _vlm_images = [image_for_vlm]
+            if image is not None and image is not image_for_vlm:
+                _vlm_images.append(image)
+
+            _current_plan = vlm.plan_remaining(
+                args.task, _vlm_images, vlm_context,
+                failed_step=_last_failed_step,
+                prior_enrichment=_accumulated_da if _accumulated_da else None,
+            )
+            _last_failed_step = None
+            vlm_time = time.time() - t_vlm
+
+            # Preserve grasp_mode from the prior plan if replanning omitted it.
+            if _prev_current_plan and _current_plan.steps:
+                _prev_picks_by_obj = {
+                    s.args.get("object", ""): s
+                    for s in _prev_current_plan.steps
+                    if s.primitive == "pick" and s.args.get("object")
+                }
+                for _s in _current_plan.steps:
+                    if _s.primitive == "pick" and "grasp_mode" not in _s.args:
+                        _obj = _s.args.get("object", "")
+                        _prev_pick = _prev_picks_by_obj.get(_obj)
+                        if _prev_pick and "grasp_mode" in _prev_pick.args:
+                            _s.args = dict(_s.args)
+                            _s.args["grasp_mode"] = _prev_pick.args["grasp_mode"]
+                            print(
+                                f"[LOOP] Inherited grasp_mode="
+                                f"'{_s.args['grasp_mode']}' for pick('{_obj}') "
+                                "from previous plan"
+                            )
+            print(f"[LOOP] VLM inference    : {vlm_time:.1f}s")
 
         if _current_plan.steps:
             _new_steps = [f"{s.primitive}({s.args})" for s in _current_plan.steps]
@@ -878,6 +923,11 @@ def main(real_ros2_default: bool = False) -> None:
             if last_pick > last_place:
                 print(f"[WARN] Phantom pick detected (already holding) — skipping")
                 completed_steps.append(f"skip_pick({step0.args.get('object','?')})")
+                if args.replan_on_failure_only and _current_plan.steps:
+                    _current_plan.steps.pop(0)
+                    if not _current_plan.steps:
+                        print("[LOOP] Piano VLM in cache esaurito.")
+                        break
                 continue
 
         # Prevent phantom place: skip place if the gripper should be empty
@@ -903,6 +953,11 @@ def main(real_ros2_default: bool = False) -> None:
                     break
                 print(f"[WARN] Phantom place detected (no pick since last place) — skipping")
                 completed_steps.append(f"skip_place({step0.args.get('object','?')})")
+                if args.replan_on_failure_only and _current_plan.steps:
+                    _current_plan.steps.pop(0)
+                    if not _current_plan.steps:
+                        print("[LOOP] Piano VLM in cache esaurito.")
+                        break
                 continue
 
         # Phase 2: VLM object names are passed directly to DINO as queries.
@@ -1326,6 +1381,20 @@ def main(real_ros2_default: bool = False) -> None:
                     _placed_at[obj_placed] = (px, py)
                     print(f"[LOOP] Annotation: '{obj_placed}' placed at "
                           f"({px:.2f},{py:.2f}) → ✓ marker added to future images")
+
+            if args.replan_on_failure_only:
+                # The first cached step is exactly the action just completed.
+                # Consume it locally instead of asking the VLM to regenerate
+                # the remaining plan on the next iteration.
+                if _current_plan is not None and _current_plan.steps:
+                    _current_plan.steps.pop(0)
+                if not _current_plan or not _current_plan.steps:
+                    print("\n[LOOP] ✅ Piano VLM completato con successo!")
+                    break
+                print(
+                    f"[LOOP] Avanzo al prossimo step in cache "
+                    f"({len(_current_plan.steps)} rimanenti)"
+                )
         else:
             # ── REPLANNING ON FAILURE ────────────────────────────────────────
             print(f"[FAIL] Step fallito: {step_desc}")

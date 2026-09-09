@@ -37,7 +37,7 @@ _APPROACH_LATERAL_M  = 0.15   # lateral clearance before grasp for side
 # On real robot (Phase 2+): detected_z from RealSense depth → same formula applies.
 # finger_tips = detected_z + _GRASP_OFFSET_Z_M - 0.133
 _USING_FR3_EE = os.environ.get("VLM_ROBOT", "panda") == "fr3"
-_GRASP_OFFSET_Z_M = 0.015 if _USING_FR3_EE else 0.11
+_GRASP_OFFSET_Z_M = -0.00 if _USING_FR3_EE else 0.11
 
 # Side grasp: Ry(90°) × Rz(180°) body rotation.
 # EEF Z = [1,0,0] (world +X) — gripper approaches from behind along +X, unchanged.
