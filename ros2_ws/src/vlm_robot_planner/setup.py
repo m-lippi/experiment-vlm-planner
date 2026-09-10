@@ -17,6 +17,8 @@ setup(
             "orchestrator = vlm_robot_planner.orchestrator:main",
             "trajectory_topic_adapter = vlm_robot_planner.trajectory_topic_adapter:main",
             "gripper_action_adapter = vlm_robot_planner.gripper_action_adapter:main",
+            "usb_webcam = vlm_robot_planner.usb_webcam:main",
+            "webcam_recorder = vlm_robot_planner.webcam_recorder:main",
         ],
     },
 )

@@ -386,8 +386,26 @@ This uses the same replanning and execution state machine as
 `run_loop_host.py`, but captures both cameras through ROS 2, loads the
 AprilTag-derived overview calibration, uses aligned depth for object poses, and
 does not query or snap positions to Gazebo. The latest GroundingDINO overlay is
-published on `/perception/dino_annotated_image`. Camera topic overrides can be
-passed after the task, for example:
+published on `/perception/dino_annotated_image`.
+
+When a Trust USB webcam is connected before the real-robot container starts,
+the launch file finds its stable `/dev/v4l/by-id` entry and publishes it on
+`/experiment_camera/image_raw`. Every real closed-loop run records that topic
+to `experiment_webcam.mp4` in its own `data/real_runs/<run>/` directory. The
+publisher waits and retries if the camera is temporarily disconnected. Disable
+recording with `--no-record-webcam`, or override the topic/FPS with
+`--webcam-topic` and `--webcam-fps`. If the USB descriptor does not contain
+"Trust", start the stack with
+`EXPERIMENT_WEBCAM_DEVICE=/dev/videoN bin/start_real.sh`; alternatively set
+`EXPERIMENT_WEBCAM_MATCH` to another
+case-insensitive device-name fragment.
+
+The overview ROS camera is also recorded by default for every closed-loop run.
+Its video is saved as `overview_camera.mp4` in the same run directory. Use
+`--no-record-overview-video` to disable it, or `--overview-video-topic` and
+`--overview-video-fps` to override the source topic and output frame rate.
+
+Camera topic overrides can be passed after the task, for example:
 
 ```bash
 bin/run_loop_ros2.sh "pick the cup" \

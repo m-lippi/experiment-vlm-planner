@@ -96,6 +96,8 @@ services:
       ros2 launch vlm_robot_planner_bringup real_robot.launch.py
       rviz:=${RVIZ:-true}
       plan_preview_duration:=${PLAN_PREVIEW_DURATION:-3.0}
+      experiment_webcam_device:=${EXPERIMENT_WEBCAM_DEVICE:-auto}
+      experiment_webcam_match:=${EXPERIMENT_WEBCAM_MATCH:-trust}
 
   ros1_bridge:
     profiles: ["real"]

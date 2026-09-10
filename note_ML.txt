@@ -11,61 +11,58 @@ docker ps
 - tf read 
 ros2 run  tf2_ros tf2_echo fr3_link0 fr3_hand
 
+
+-- logs di docker
 docker logs -f vlm_ros2_real 2>&1 | grep --line-buffered -E 'vlm_robot_planner|MoveIt2|Perception|Primitive|Orchestrator'
 
 docker logs -f vlm_ros2_real 2>&1 | rg "detected|Primitive|orchestrator|gripper"
 
 (2&1 prende stdout e stderr)
 	
+
 	
-	
+---------	
 COMMANDSSSS
 ----------------
 	
 bin/start_real.sh --preview-seconds 0 --fail-on-empty-grasp
 
-	
-	
-	
-	
-	
-	
-TO TEST:  
+bin/run_loop_ros2.sh "put the pen on the notebook" --confirm-actions --replan-on-failure-only
 
- 0 -- sync
- 1-- test fixed grasp (prima in ros1 e poi tramite ros2)
- Esito: ok (funziona sia in run_test_pick_place che in bin/run_test_primitives.sh --only gripper con il cubo)
-  
- 2-- test real pick and place 
+
+- if webcam recording does not work EXPERIMENT_WEBCAM_DEVICE=/dev/videoN bin/start_real.sh 
+	add --no-record-webcam to disable it
+- for overview camera recording 
+	--no-record-overview-video
+	--overview-video-topic /custom/topic
+	--overview-video-fps 20.0
+
+
+	
+
+----------------------------------
+CALIBRATION with AprilTag
+----------------------------------
+
+python3 scripts/save_table_apriltag_transform.py --tag-id 0 --tag-size 0.160
+python3 scripts/calibrate_overview_camera_apriltag.py --tag-id 0 --tag-size 0.16
+
+--tag-size is the outer black-square edge length in metres. If the tag is not flush with the tabletop, pass the actual table height using --table-z.
+
+	
+	
+	
+	
+POSSIBLE TESTS:  
+
+1 -- test real pick and place 
  bin/run_test_pick_place.sh 
  
- Esito: ok 
- 
- 3 --vedere se movit mostra traiettoria pianificata 
- Esito: NON funzionante
- 
- bin/start_real.sh --preview-seconds 2
-After the specified interval, execution starts automatically. Set plan_preview_duration:=0 to disable the delay.
  
  
- 4-- chiamare una primitiva con il nuovo setup
  
- ESITO: look_at works - pick works (grasp pose è 5cm sopra oggetto e pre grasp è 15 cm sopra grasp) - place works (place point è +3cm rispetto a oggetto, pre place +15 cm rispetto a place)
- 
-
- Le primitive lavorano con le terne fr3_link0 fr3_hand
- It covers:
-- navigate_to stub
-- Gripper open/close
-- look_at
-- tilt
-- pour
-- stir
-- cut
-- pick
-- place
-
-Start the real stack, then verify connectivity without motion:
+ 2 -- Esecuzione singola primitiva. NOTA:  Le primitive lavorano con le terne fr3_link0 fr3_hand
+Possibili primitive: - Gripper open/close, - look_at, - tilt, - pour, - stir, - cut, - pick, - place 
 
 bin/start_real.sh
 bin/run_test_primitives.sh --check-only
@@ -74,72 +71,19 @@ Run individual primitives first:
 
 bin/run_test_primitives.sh --only gripper
 bin/run_test_primitives.sh --only tilt
-bin/run_test_primitives.sh --only pick --only place
-Run the complete interactive sequence:
-bin/run_test_primitives.sh
 
- 
- 5-- test the camera 
+
  
  Nota: non si usano + i seguenti topic
     "/wrist_camera/image_raw",
     "/overview_camera/image_raw",
 
+ma ora pubblica come overview_camera/overview_camera/color/image_raw
  
  
- NOTE: ora pubblica come overview_camera/overview_camera/color/image_raw
- 
- 
- STATO: primitive funzionano, le due camere girano, esiste tf tree da link0 a camera_link (wrist)
-overview_camera/overview_camera/color/image_raw
-
-----------------------------------
-CALIBRATION
-----------------------------------
-
-Implemented the AprilTag-based calibration workflow.
-New scripts:
-- [save_table_apriltag_transform.py](/home/alexis-martinez/Desktop/real-robot/scripts/save_table_apriltag_transform.py) detects the tag from /camera/color/image_raw, combines it with wrist-camera TF, and saves the tag pose in fr3_link0.
-- [calibrate_overview_camera_apriltag.py](/home/alexis-martinez/Desktop/real-robot/scripts/calibrate_overview_camera_apriltag.py) reads the requested overview CameraInfo, detects the same tag, and writes:
-  - data/overview_camera_info.json
-  - data/overview_camera_setup.json
-  - data/overview_camera_pose.json
-Usage:
-# Keep the robot stationary and show the tag to the wrist camera.
-
-
-
-python3 scripts/save_table_apriltag_transform.py --tag-id 0 --tag-size 0.160
-
-
-# Without moving the tag, show it to the overview camera.
-python3 scripts/calibrate_overview_camera_apriltag.py --tag-id 0 --tag-size 0.16
-
-
-  --tag-id 0
---tag-size is the outer black-square edge length in metres. If the tag is not flush with the tabletop, pass the actual table height using --table-z.
-
-
-2) OKK --- Created a ROS 2-native RGB-D capture and planning workflow.
-Main entry point:
+2) Solo planning: 
 bin/capture_and_plan_ros2.sh --task "pick the red box and place in the bowl" --publish-poses
-It:
-- Captures overview aligned RGB, depth, and CameraInfo through ROS 2 topics.
-- Optionally captures the wrist camera.
-- Runs VLM planning and GroundingDINO detection.
-- Converts each detection?s median depth into a 3-D position in fr3_link0.
-- Saves results under data/ros2_runs/<timestamp>_<task>/, including:
-  - detections_with_poses.json
-  - overview_detections.png
-  - RGB/depth/calibration snapshots
-  - plan.json
-  - problem.pddl
-- Optionally publishes detected positions to /perception/object_pose.
-- Publishes the calibrated overview static transform if it is absent.
-Files added:
-- [capture_and_plan_ros2.py](/home/alexis-martinez/Desktop/real-robot/scripts/capture_and_plan_ros2.py)
-- [_capture_ros2_cameras.py](/home/alexis-martinez/Desktop/real-robot/scripts/_capture_ros2_cameras.py)
-- [capture_and_plan_ros2.sh](/home/alexis-martinez/Desktop/real-robot/bin/capture_and_plan_ros2.sh)
+
 
 Capture-only usage:
 bin/capture_and_plan_ros2.sh \
@@ -150,58 +94,8 @@ bin/capture_and_plan_ros2.sh \
   --task "pick the cup" \
   --no-wrist
   
- 3) 
- Created the real-world ROS 2 closed-loop equivalent.
-Run it with:
+ 3) real-world ROS 2 closed-loop equivalent.
 bin/run_loop_ros2.sh "pick the red box and place in the bowl" --confirm-actions
-
-
-
-
-
-Added:
-- [run_loop_ros2_host.py](/home/alexis-martinez/Desktop/real-robot/scripts/run_loop_ros2_host.py)
-- [run_loop_ros2.sh](/home/alexis-martinez/Desktop/real-robot/bin/run_loop_ros2.sh)
-The real mode reuses the existing closed-loop state machine but:
-- Captures aligned RGB-D data through the configured ROS 2 topics.
-- Loads the AprilTag-derived overview intrinsics and cam_to_base.
-- Disables Gazebo model queries and oracle position snapping.
-- Uses overview depth for GroundingDINO object localization.
-- Rejects detections without valid aligned depth instead of falling back to a guessed table plane.
-- Publishes accepted poses through /perception/object_pose.
-- Records full XYZ poses in each iteration?s debug.json under detected_object_poses.
-- Falls back to the overview camera if wrist RGB-D or wrist TF is unavailable.
-Topic overrides can be passed after the task:
-bin/run_loop_ros2.sh "pick the cup" \
-  --overview-image-topic /overview_camera/overview_camera/color/image_raw \
-  --overview-depth-topic /overview_camera/overview_camera/aligned_depth_to_color/image_raw \
-  --overview-info-topic /overview_camera/overview_camera/aligned_depth_to_color/camera_info \
-  --wrist-image-topic /camera/color/image_raw \
-  --wrist-depth-topic /camera/aligned_depth_to_color/image_raw \
-  --wrist-info-topic /camera/color/camera_info \
-  --max-steps 8
-The implementation passed compilation, shell syntax, calibration loading, and ROS capture-contract tests. Robot execution was intentionally not started because the camera topics were not active.
-
-
-
-MINOR:  rimuovere tempo di attesa di 3 sec
-
-TO TEST: 
-
-2) capire perché apriltag ha errore così elevato -- verificare se meglio con nuovo camera info
-
-
-Saved fr3_link0 <- tag transform to /workspace/data/table_apriltag_transform.json
-[[ 0.056972 -0.99836   0.005596  0.609519]
- [ 0.998335  0.056918 -0.009369  0.23225 ]
- [ 0.009035  0.00612   0.99994   0.348553]
- [ 0.        0.        0.        1.      ]]
-
-Translation: [0.623, 0.253, 0.372]
-
-
-TO DO: 
-4) to do -- per definire posa target usare camera se oggetto visibile in camera 
 
 
 
@@ -277,6 +171,6 @@ inspect the plant
 Closed loop con persona che sposta oggetto 
 
 
-  TODO: 
-  -- restituire pick successo se effettivamente prende ogfgetto (controllo su grasp)
-'
+  TO test: 
+- hybrid part and test it 
+- test pour

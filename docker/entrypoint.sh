@@ -49,7 +49,7 @@ if [ -d /workspace/ros2_ws/src ]; then
     # colcon-ros ament_python puts console_scripts in bin/ via pip editable install,
     # but ros2 launch's executable finder looks in lib/<pkg_name>/.
     # Create the missing symlink manually.
-    for EXECUTABLE in orchestrator trajectory_topic_adapter gripper_action_adapter; do
+    for EXECUTABLE in orchestrator trajectory_topic_adapter gripper_action_adapter usb_webcam webcam_recorder; do
         BIN="/workspace/ros2_ws/install/vlm_robot_planner/bin/${EXECUTABLE}"
         LIBEXEC="/workspace/ros2_ws/install/vlm_robot_planner/lib/vlm_robot_planner/${EXECUTABLE}"
         if [ -f "$BIN" ]; then

@@ -136,6 +136,16 @@ def generate_launch_description() -> LaunchDescription:
         default_value="/effort_joint_trajectory_controller/command",
         description="ROS 1 JointTrajectory command topic, as exposed by ros1_bridge",
     )
+    experiment_webcam_device_arg = DeclareLaunchArgument(
+        "experiment_webcam_device",
+        default_value="auto",
+        description="Trust webcam V4L2 path, or 'auto' for name-based discovery",
+    )
+    experiment_webcam_match_arg = DeclareLaunchArgument(
+        "experiment_webcam_match",
+        default_value="trust",
+        description="Case-insensitive device-name match used in auto mode",
+    )
     overview_args = [
         DeclareLaunchArgument("overview_x", default_value=str(_cam_cfg.get("x", 0.65))),
         DeclareLaunchArgument("overview_y", default_value=str(_cam_cfg.get("y", 0.70))),
@@ -261,6 +271,21 @@ def generate_launch_description() -> LaunchDescription:
             ],
         }],
         output="screen",
+    )
+    experiment_webcam = Node(
+        package="vlm_robot_planner",
+        executable="usb_webcam",
+        name="experiment_usb_webcam",
+        output="screen",
+        parameters=[{
+            "device": LaunchConfiguration("experiment_webcam_device"),
+            "device_name_match": LaunchConfiguration("experiment_webcam_match"),
+            "image_topic": "/experiment_camera/image_raw",
+            "frame_id": "experiment_camera_optical_frame",
+            "width": 640,
+            "height": 480,
+            "fps": 10.0,
+        }],
     )
 
     # realsense_launch = IncludeLaunchDescription(
@@ -401,11 +426,14 @@ def generate_launch_description() -> LaunchDescription:
             allowed_start_tolerance_arg,
             joint_state_topic_arg,
             command_topic_arg,
+            experiment_webcam_device_arg,
+            experiment_webcam_match_arg,
             *overview_args,
             robot_state_publisher,
             trajectory_adapter,
             gripper_adapter,
             realsense_node,
+            experiment_webcam,
             static_tf,
             static_tf_overview,
             *table_apriltag_tf_nodes,

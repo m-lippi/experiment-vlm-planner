@@ -360,6 +360,8 @@ class PerceptionModule:
         obj_z_base: float = 0.025,
         vlm_description: str | None = None,
         depth_image: np.ndarray | None = None,
+        excluded_positions: list[tuple[float, ...]] | None = None,
+        exclusion_radius: float = 0.0,
     ) -> dict | None:
         """
         Estimate a 3D object pose in panda_link0 frame.
@@ -378,6 +380,10 @@ class PerceptionModule:
           2. Otherwise: object_name converted to natural language ("red cup")
           3. Fallback synonyms from _QUERY_SYNONYMS if defined
 
+        When excluded_positions is supplied, detections whose projected XY pose
+        is within exclusion_radius of one of those positions are ignored. This
+        selects a new instance after a similar object has already been handled.
+
         Returns {"x": …, "y": …, "z": …} in panda_link0 frame, or None.
         """
         if self._model is None:
@@ -388,8 +394,7 @@ class PerceptionModule:
         primary  = vlm_description.lower() if vlm_description else readable
         queries  = list(dict.fromkeys([primary, readable] + synonyms))
 
-        best_score = -1.0
-        best_box   = None
+        candidates: list[tuple[float, list[float]]] = []
         for q in queries:
             readable_q = q.replace("_", " ").lower() + " ."
             inputs_q = self._processor(
@@ -406,55 +411,86 @@ class PerceptionModule:
                 target_sizes=[(H, W)],
             )[0]
             for box, score in zip(res["boxes"], res["scores"]):
-                s = float(score)
-                if s > best_score:
-                    best_score = s
-                    best_box   = box.tolist()
+                candidates.append((float(score), box.tolist()))
 
-        if best_box is None:
+        if not candidates:
             self._last_detection = None
             return None
-
-        u = (best_box[0] + best_box[2]) / 2.0
-        v = (best_box[1] + best_box[3]) / 2.0
-        print(f"[Perception] get_pose '{object_name}': GroundingDINO "
-              f"score={best_score:.3f} → center=({u:.0f},{v:.0f})")
-        self._last_detection = {
-            "name":  object_name,
-            "box":   best_box,
-            "score": best_score,
-        }
 
         R     = cam_to_base[:3, :3]
         t     = cam_to_base[:3, 3]
         K_inv = np.linalg.inv(K)
+        exclusions = excluded_positions or []
 
-        # ── Mode 1: depth-based unprojection (real robot, RealSense) ─────────
-        if depth_image is not None:
-            z_cam = self._median_depth_from_box(depth_image, best_box)
-            if z_cam is not None and z_cam > 0.05:
-                p_cam = K_inv @ np.array([u, v, 1.0]) * z_cam
-                point = R @ p_cam + t
+        # DINO commonly returns one box for every similar-looking instance.
+        # Prefer confidence, but skip boxes at recorded handled-object positions.
+        for score, box in sorted(candidates, key=lambda item: item[0], reverse=True):
+            u = (box[0] + box[2]) / 2.0
+            v = (box[1] + box[3]) / 2.0
+            point = None
+            z_cam = None
+
+            if depth_image is not None:
+                z_cam = self._median_depth_from_box(depth_image, box)
+                if z_cam is not None and z_cam > 0.05:
+                    p_cam = K_inv @ np.array([u, v, 1.0]) * z_cam
+                    point = R @ p_cam + t
+
+            if point is None:
+                d_cam = K_inv @ np.array([u, v, 1.0])
+                d_base = R @ d_cam
+                norm = np.linalg.norm(d_base)
+                if norm < 1e-9:
+                    continue
+                d_base /= norm
+                if abs(d_base[2]) < 1e-9:
+                    continue
+                t_ray = (obj_z_base - t[2]) / d_base[2]
+                if t_ray < 0:
+                    continue
+                point = t + t_ray * d_base
+
+            excluded = any(
+                math.hypot(
+                    float(point[0]) - float(position[0]),
+                    float(point[1]) - float(position[1]),
+                ) <= exclusion_radius
+                for position in exclusions
+                if len(position) >= 2
+            )
+            if excluded:
+                print(
+                    f"[Perception] get_pose '{object_name}': skipping handled "
+                    f"candidate at ({point[0]:.3f},{point[1]:.3f})"
+                )
+                continue
+
+            print(f"[Perception] get_pose '{object_name}': GroundingDINO "
+                  f"score={score:.3f} → center=({u:.0f},{v:.0f})")
+            self._last_detection = {
+                "name": object_name,
+                "box": box,
+                "score": score,
+            }
+            if z_cam is not None:
                 print(f"[Perception] depth median z_cam={z_cam:.3f}m "
                       f"→ base ({point[0]:.3f},{point[1]:.3f},{point[2]:.3f})")
-                return {"x": float(point[0]), "y": float(point[1]), "z": float(point[2])}
-            print(f"[Perception] depth sampling failed for '{object_name}' "
-                  f"— falling back to ray-plane")
+            elif depth_image is not None:
+                print(f"[Perception] depth sampling failed for '{object_name}' "
+                      f"— falling back to ray-plane")
+            return {
+                "x": float(point[0]),
+                "y": float(point[1]),
+                "z": float(point[2]) if z_cam is not None else float(obj_z_base),
+            }
 
-        # ── Mode 2: ray-plane intersection at fixed z (simulation fallback) ──
-        d_cam  = K_inv @ np.array([u, v, 1.0])
-        d_base = R @ d_cam
-        norm   = np.linalg.norm(d_base)
-        if norm < 1e-9:
-            return None
-        d_base /= norm
-        if abs(d_base[2]) < 1e-9:
-            return None
-        t_ray = (obj_z_base - t[2]) / d_base[2]
-        if t_ray < 0:
-            return None
-        point = t + t_ray * d_base
-        return {"x": float(point[0]), "y": float(point[1]), "z": float(obj_z_base)}
+        self._last_detection = None
+        if exclusions:
+            print(
+                f"[Perception] get_pose '{object_name}': all detections are "
+                "at previously handled positions"
+            )
+        return None
 
     @staticmethod
     def draw_detections(

@@ -36,7 +36,8 @@ from vlm_robot_planner.primitives.base import ArmPrimitive, _TOP_DOWN_QUAT
 # Preserve the former physical TCP height: hand target 0.15 m minus the
 # 0.1034 m hand-to-TCP offset is approximately 0.05 m at fr3_EE.
 _USING_FR3_EE = os.environ.get("VLM_ROBOT", "panda") == "fr3"
-_RELEASE_HEIGHT_M = 0.06 if _USING_FR3_EE else 0.15
+# _RELEASE_HEIGHT_M = 0.06 if _USING_FR3_EE else 0.15
+_RELEASE_HEIGHT_M = 0.08 if _USING_FR3_EE else 0.15
 # Approach height above the release pose (pre-place clearance)
 _APPROACH_HEIGHT_M = 0.15
 
@@ -132,9 +133,9 @@ class PlacePrimitive(ArmPrimitive):
         # PILZ PTP paths that could dip near table-level objects.
         # Falls back to direct "ready" if safe_retreat is unreachable.
 
-        self._log("  → safe retreat")
-        if not self.move_to_named("safe_retreat"):
-            self._log("safe_retreat unreachable — returning directly to ready")
+        # self._log("  → safe retreat")
+        # if not self.move_to_named("safe_retreat"):
+        #     self._log("safe_retreat unreachable — returning directly to ready")
 
 
         self._log("  → ready configuration")

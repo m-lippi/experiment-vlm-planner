@@ -22,9 +22,11 @@ is that Gazebo oracle is replaced by RealSense depth in the PerceptionModule.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -41,11 +43,267 @@ def _docker(container: str, use_sudo: bool) -> list[str]:
     return (["sudo", "docker"] if use_sudo else ["docker"]) + ["exec", "-i", container]
 
 
+def _world_label(args) -> str:
+    """Return truthful environment metadata for logs."""
+    return "real_ros2" if args.real_ros2 else getattr(args, "world", "unknown")
+
+
 def _run_in_container(args, bash_cmd: str, timeout: int = 30) -> subprocess.CompletedProcess:
     return subprocess.run(
         _docker(args.container, args.sudo_docker) + ["bash", "-c", bash_cmd],
         capture_output=True, timeout=timeout,
     )
+
+
+def _capture_robot_state(args, timeout: float = 2.0) -> dict:
+    """Read joints and end-effector TF from ROS 2 without moving the robot."""
+    robot = "fr3" if args.real_ros2 else "panda"
+    command = (
+        "source /opt/ros/humble/setup.bash && "
+        "source /workspace/ros2_ws/install/setup.bash && "
+        "python3 /workspace/scripts/_capture_robot_state.py "
+        f"--robot {robot} --timeout {timeout:.3f}"
+    )
+    try:
+        result = _run_in_container(args, command, timeout=int(timeout) + 4)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"available": False, "errors": [f"state capture failed: {exc}"]}
+
+    for line in reversed(result.stdout.decode(errors="replace").splitlines()):
+        try:
+            state = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(state, dict) and "available" in state:
+            if result.returncode != 0:
+                state.setdefault("errors", []).append(
+                    result.stderr.decode(errors="replace").strip()
+                    or f"capture exited with code {result.returncode}"
+                )
+            return state
+    error = result.stderr.decode(errors="replace").strip()
+    return {
+        "available": False,
+        "errors": [error or "robot-state helper returned no JSON"],
+    }
+
+
+def _update_iteration_debug(iter_dir: Path, updates: dict) -> None:
+    """Merge post-dispatch facts into an iteration debug file."""
+    path = iter_dir / "debug.json"
+    try:
+        debug = json.loads(path.read_text(encoding="utf-8"))
+        debug.update(updates)
+        path.write_text(
+            json.dumps(debug, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"[WARN] Could not update {path.name} after execution: {exc}")
+
+
+class _ExperimentVideoRecording:
+    """Own the docker-exec recorder process and finalize its MP4 safely."""
+
+    def __init__(
+        self, process: subprocess.Popen, log_stream, output_path: Path,
+        label: str, log_name: str, *, container: str, use_sudo: bool,
+        pid_path: Path,
+    ):
+        self.process = process
+        self.log_stream = log_stream
+        self.output_path = output_path
+        self.label = label
+        self.log_name = log_name
+        self.container = container
+        self.use_sudo = use_sudo
+        self.pid_path = pid_path
+        self._stopped = False
+
+    def _signal_recorder(self) -> bool:
+        """Signal the recorder inside Docker, not the disposable exec client."""
+        try:
+            pid = self.pid_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        if not pid.isdigit() or int(pid) <= 1:
+            return False
+        try:
+            result = subprocess.run(
+                _docker(self.container, self.use_sudo) + ["kill", "-INT", pid],
+                capture_output=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
+
+    def stop(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+        signaled_in_container = self._signal_recorder()
+        if self.process.poll() is None:
+            if not signaled_in_container:
+                self.process.send_signal(signal.SIGINT)
+            try:
+                self.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=3)
+        try:
+            self.pid_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            print(f"[WARN] Could not remove recorder PID file: {exc}")
+        self.log_stream.close()
+        if self.output_path.exists() and self.output_path.stat().st_size > 0:
+            print(f"[LOOP] {self.label} video: {self.output_path.name}")
+        else:
+            print(
+                f"[WARN] {self.label} produced no video; check "
+                f"{self.log_name} and its ROS image topic"
+            )
+
+
+def _format_ros_double(value: float) -> str:
+    """Serialize a ROS CLI double without it being inferred as an integer."""
+    return f"{float(value):.6f}"
+
+
+def _start_ros_video(
+    args, run_dir: Path, *, enabled: bool, topic: str, fps: float,
+    filename: str, log_name: str, label: str, node_name: str,
+) -> _ExperimentVideoRecording | None:
+    """Start a ROS 2 topic recorder writing into this experiment directory."""
+    if not enabled:
+        return None
+    try:
+        relative_dir = run_dir.relative_to(_REPO_ROOT)
+    except ValueError:
+        print("[WARN] Run directory is outside the shared workspace; video disabled")
+        return None
+
+    output_path = run_dir / filename
+    container_output = Path("/workspace") / relative_dir / output_path.name
+    pid_path = run_dir / f".{node_name}.pid"
+    container_pid_path = Path("/workspace") / relative_dir / pid_path.name
+    try:
+        pid_path.unlink()
+    except FileNotFoundError:
+        pass
+    command = (
+        "source /opt/ros/humble/setup.bash && "
+        "source /workspace/ros2_ws/install/setup.bash && "
+        f"echo $$ > {shlex.quote(str(container_pid_path))} && "
+        "exec /workspace/ros2_ws/install/vlm_robot_planner/"
+        "lib/vlm_robot_planner/webcam_recorder --ros-args "
+        f"-r __node:={shlex.quote(node_name)} "
+        f"-p image_topic:={shlex.quote(topic)} "
+        f"-p output_path:={shlex.quote(str(container_output))} "
+        f"-p fps:={_format_ros_double(fps)}"
+    )
+    log_stream = (run_dir / log_name).open("w", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            _docker(args.container, args.sudo_docker) + ["bash", "-c", command],
+            stdin=subprocess.DEVNULL,
+            stdout=log_stream,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        log_stream.close()
+        print(f"[WARN] Could not start {label}: {exc}")
+        return None
+
+    recording = _ExperimentVideoRecording(
+        process,
+        log_stream,
+        output_path,
+        label,
+        log_name,
+        container=args.container,
+        use_sudo=args.sudo_docker,
+        pid_path=pid_path,
+    )
+    time.sleep(1.0)
+    if process.poll() is not None:
+        recording.stop()
+        print(
+            f"[WARN] {label} recorder exited during startup; rebuild the ROS 2 "
+            f"workspace and inspect {log_name}"
+        )
+        return None
+    atexit.register(recording.stop)
+    print(f"[LOOP] Recording {topic} -> {output_path.name}")
+    return recording
+
+
+def _start_experiment_video(
+    args, run_dir: Path,
+) -> _ExperimentVideoRecording | None:
+    return _start_ros_video(
+        args,
+        run_dir,
+        enabled=args.record_webcam,
+        topic=args.webcam_topic,
+        fps=args.webcam_fps,
+        filename="experiment_webcam.mp4",
+        log_name="webcam_recorder.log",
+        label="Experiment webcam",
+        node_name="experiment_webcam_recorder",
+    )
+
+
+def _capture_overview_image(args, run_dir: Path, label: str) -> bool:
+    """Capture a single frame from the overview camera and save it to run_dir."""
+    try:
+        if getattr(args, "real_ros2", False):
+            capture_dir = run_dir / "_overview_capture"
+            capture_dir.mkdir(exist_ok=True)
+            container_dir = "/workspace" / run_dir.relative_to(_REPO_ROOT) / "_overview_capture"
+            command = (
+                "source /opt/ros/humble/setup.bash && "
+                "source /workspace/ros2_ws/install/setup.bash && "
+                "python3 /workspace/scripts/_capture_ros2_cameras.py "
+                f"--output-dir {container_dir} --timeout {args.capture_timeout} "
+                f"--overview-image-topic {shlex.quote(args.overview_image_topic)} "
+                f"--overview-depth-topic {shlex.quote(args.overview_depth_topic)} "
+                f"--overview-info-topic {shlex.quote(args.overview_info_topic)}"
+            )
+            result = _run_in_container(args, command, timeout=int(args.capture_timeout) + 8)
+            if result.returncode == 0:
+                src = capture_dir / "overview.png"
+                if src.exists():
+                    dst = run_dir / f"overview_{label}.png"
+                    import shutil
+                    shutil.move(str(src), str(dst))
+                    print(f"[LOOP] Overview snapshot ({label}): {dst.name}")
+                    return True
+            return False
+        else:
+            bash_cmd = (
+                "source /opt/ros/humble/setup.bash && "
+                "source /workspace/ros2_ws/install/setup.bash && "
+                "python3 /workspace/scripts/_capture_scene.py"
+            )
+            r = _run_in_container(args, bash_cmd, timeout=15)
+            if r.returncode == 0:
+                src = _REPO_ROOT / "data" / "scene_overview.png"
+                if src.exists():
+                    import shutil
+                    dst = run_dir / f"overview_{label}.png"
+                    shutil.copy2(str(src), str(dst))
+                    print(f"[LOOP] Overview snapshot ({label}): {dst.name}")
+                    return True
+            return False
+    except Exception as exc:
+        print(f"[WARN] Overview capture ({label}) failed: {exc}")
+        return False
 
 
 def _pre_scan(args) -> bool:
@@ -319,6 +577,9 @@ def _annotate_handled_objects(
     data_dir: str,
     info_file: str = "camera_info.json",
     pose_file: str = "camera_pose.json",
+    *,
+    camera_matrix=None,
+    cam_to_base=None,
 ) -> "PIL.Image.Image":
     """
     Annotate the image with already-handled objects using two non-obstructive elements:
@@ -336,22 +597,31 @@ def _annotate_handled_objects(
     from PIL import ImageDraw
     from pathlib import Path
 
-    ci_path = Path(data_dir) / info_file
-    cp_path = Path(data_dir) / pose_file
-
-    print(f"[LOOP] Annotating ") 
-    K, cam_to_base, R, t = None, None, None, None
-    if ci_path.exists() and cp_path.exists():
+    K, R, t = None, None, None
+    if camera_matrix is not None and cam_to_base is not None:
         try:
-            with open(ci_path) as f:
-                K = np.array(json.load(f)["K"])
-            with open(cp_path) as f:
-                cam_to_base = np.array(json.load(f)["cam_to_base"])
+            K = np.asarray(camera_matrix, dtype=float)
+            cam_to_base = np.asarray(cam_to_base, dtype=float)
             base_to_cam = np.linalg.inv(cam_to_base)
             R = base_to_cam[:3, :3]
             t = base_to_cam[:3, 3]
-        except Exception:
-            pass
+        except (TypeError, ValueError, np.linalg.LinAlgError) as exc:
+            print(f"[WARN] Invalid annotation calibration: {exc}")
+    else:
+        ci_path = Path(data_dir) / info_file
+        cp_path = Path(data_dir) / pose_file
+        if ci_path.exists() and cp_path.exists():
+            try:
+                with open(ci_path) as f:
+                    K = np.array(json.load(f)["K"])
+                with open(cp_path) as f:
+                    cam_to_base = np.array(json.load(f)["cam_to_base"])
+                base_to_cam = np.linalg.inv(cam_to_base)
+                R = base_to_cam[:3, :3]
+                t = base_to_cam[:3, 3]
+            except (OSError, KeyError, TypeError, ValueError,
+                    json.JSONDecodeError, np.linalg.LinAlgError) as exc:
+                print(f"[WARN] Cannot load annotation calibration: {exc}")
 
     dbg  = image.copy()
     draw = ImageDraw.Draw(dbg)
@@ -360,9 +630,12 @@ def _annotate_handled_objects(
 
     # ── 1. Small cross at each projected object position ─────────────────────
     if R is not None:
-        print(f"[LOOP] Annotating cross") 
-        for i, (name, (px, py)) in enumerate(placed_at.items(), 1):
-            p_cam = R @ np.array([px, py, 0.025]) + t
+        for i, (name, position) in enumerate(placed_at.items(), 1):
+            px, py = position[:2]
+            # Keep compatibility with older XY-only state, but use measured Z
+            # whenever available. Real work surfaces are not at z=0.025 m.
+            pz = position[2] if len(position) >= 3 else 0.025
+            p_cam = R @ np.array([px, py, pz]) + t
             if p_cam[2] <= 0.05:
                 continue
             u = int(K[0, 0] * p_cam[0] / p_cam[2] + K[0, 2])
@@ -386,6 +659,35 @@ def _annotate_handled_objects(
         draw.text((PAD + 2, PAD + i * LH), line, fill=color)
 
     return dbg
+
+
+def _placed_object_position(
+    original_location: str,
+    resolved_location: str,
+    estimates: dict[str, tuple[float, float]],
+    poses: dict[str, dict],
+    gazebo_poses: dict[str, dict],
+) -> tuple[float, float, float] | tuple[float, float] | None:
+    """Resolve a successful place destination for handled-object annotation."""
+    names = tuple(dict.fromkeys((resolved_location, original_location)))
+    for name in names:
+        pose = poses.get(name, {}).get("position", {})
+        if all(axis in pose for axis in ("x", "y", "z")):
+            return float(pose["x"]), float(pose["y"]), float(pose["z"])
+        if name in estimates:
+            return tuple(estimates[name])
+        # Gazebo reports world coordinates; panda_link0 is at world x=0.20.
+        gazebo_pose = gazebo_poses.get(name)
+        if gazebo_pose and "x" in gazebo_pose and "y" in gazebo_pose:
+            position = (
+                float(gazebo_pose["x"]) - 0.20,
+                float(gazebo_pose["y"]),
+            )
+            if "z" in gazebo_pose:
+                # Gazebo world table top is z=0.770; panda_link0 is at table height.
+                return position + (max(float(gazebo_pose["z"]) - 0.770, 0.0),)
+            return position
+    return None
 
 
 def _publish_perception_pose(
@@ -515,7 +817,7 @@ def _wait_step_complete(
 def main(real_ros2_default: bool = False) -> None:
     parser = argparse.ArgumentParser(description="Closed-loop task execution")
     parser.add_argument("--task",       required=True)
-    parser.add_argument("--max-steps",  type=int, default=10)
+    parser.add_argument("--max-steps",  type=int, default=20)
     parser.add_argument(
         "--container",
         default="vlm_ros2_real" if real_ros2_default else "vlm_ros2",
@@ -561,14 +863,66 @@ def main(real_ros2_default: bool = False) -> None:
         "--overview-info-topic",
         default="/overview_camera/overview_camera/aligned_depth_to_color/camera_info",
     )
+    overview_recording = parser.add_mutually_exclusive_group()
+    overview_recording.add_argument(
+        "--record-overview-video",
+        dest="record_overview_video",
+        action="store_true",
+        help="Record the overview camera into the run directory (default)",
+    )
+    overview_recording.add_argument(
+        "--no-record-overview-video",
+        dest="record_overview_video",
+        action="store_false",
+        help="Disable overview-camera video recording",
+    )
+    parser.set_defaults(record_overview_video=True)
+    parser.add_argument(
+        "--overview-video-topic",
+        default=None,
+        help="ROS 2 overview topic to record; defaults according to run mode",
+    )
+    parser.add_argument(
+        "--overview-video-fps", type=float, default=None,
+        help="Output overview-video FPS (default: 30 real, 10 simulation)",
+    )
     parser.add_argument("--wrist-image-topic", default="/camera/color/image_raw")
     parser.add_argument(
         "--wrist-depth-topic", default="/camera/aligned_depth_to_color/image_raw"
     )
     parser.add_argument("--wrist-info-topic", default="/camera/color/camera_info")
+    webcam_recording = parser.add_mutually_exclusive_group()
+    webcam_recording.add_argument(
+        "--record-webcam", dest="record_webcam", action="store_true",
+        help="Record the external ROS 2 experiment camera",
+    )
+    webcam_recording.add_argument(
+        "--no-record-webcam", dest="record_webcam", action="store_false",
+        help="Disable external experiment-camera recording",
+    )
+    parser.set_defaults(record_webcam=None)
+    parser.add_argument(
+        "--webcam-topic", default="/experiment_camera/image_raw",
+        help="ROS 2 image topic recorded into the run directory",
+    )
+    parser.add_argument("--webcam-fps", type=float, default=20.0)
     args = parser.parse_args()
     if args.capture_timeout <= 0:
         parser.error("--capture-timeout must be positive")
+    if args.webcam_fps <= 0:
+        parser.error("--webcam-fps must be positive")
+    if args.overview_video_fps is not None and args.overview_video_fps <= 0:
+        parser.error("--overview-video-fps must be positive")
+    if args.record_webcam is None:
+        args.record_webcam = args.real_ros2
+    if args.overview_video_topic is None:
+        args.overview_video_topic = (
+            args.overview_image_topic
+            if args.real_ros2
+            else "/overview_camera/image_raw"
+        )
+    if args.overview_video_fps is None:
+        args.overview_video_fps = 30.0 if args.real_ros2 else 10.0
 
     execution_mode = "ENABLED" if args.execute else "DISABLED (observation only)"
     print(f"[LOOP] Robot execution: {execution_mode}")
@@ -579,29 +933,12 @@ def main(real_ros2_default: bool = False) -> None:
     )
     print(f"[LOOP] Planning policy: {planning_mode}")
 
-    print("[LOOP] Loading VLM (Qwen3-VL-8B-Instruct)…")
-    from vlm.planner import VLMPlanner
-    from vlm.perception import PerceptionModule
-    from PIL import Image as PilImage
-
-    vlm       = VLMPlanner()
-    vlm.load()
-    perception = PerceptionModule()
-    perception.load()
-    print("[OK]   VLM + PerceptionModule loaded.\n")
-
-    completed_steps: list[str] = []
-    docker_cmd = _docker(args.container, args.sudo_docker)
-
-    # Replanning on failure state
-    _current_plan       = None   # cached full VLMPlan (remaining steps)
-    _last_failed_step   = None   # step that caused last replan
-    _replan_count       = 0      # how many times we've replanned
-
+    # Create the run and start its external video before model loading so the
+    # recording covers the complete closed-loop experiment invocation.
     import datetime
     _ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    _world_tag = "real_ros2" if args.real_ros2 else getattr(args, "world", "unknown")
-    _task_tag  = args.task[:30].replace(" ", "_").replace("/", "-")
+    _world_tag = _world_label(args)
+    _task_tag = args.task[:30].replace(" ", "_").replace("/", "-")
     _runs_root = "real_runs" if args.real_ros2 else "runs"
     _RUN_DIR = (
         _REPO_ROOT / "data" / _runs_root
@@ -615,6 +952,57 @@ def main(real_ros2_default: bool = False) -> None:
         _rf.write(f"execute:   {args.execute}\n")
         _rf.write(f"replan_on_failure_only: {args.replan_on_failure_only}\n")
     print(f"[LOOP] Run dir: {_RUN_DIR.relative_to(_REPO_ROOT)}")
+    _loop_started_monotonic = time.monotonic()
+    _loop_started_at = datetime.datetime.now(
+        datetime.timezone.utc
+    ).isoformat(timespec="milliseconds")
+    _video_recordings = []
+    _overview_recording = _start_ros_video(
+        args,
+        _RUN_DIR,
+        enabled=args.record_overview_video,
+        topic=args.overview_video_topic,
+        fps=args.overview_video_fps,
+        filename="overview_camera.mp4",
+        log_name="overview_camera_recorder.log",
+        label="Overview camera",
+        node_name="overview_camera_recorder",
+    )
+    if _overview_recording is not None:
+        _video_recordings.append(_overview_recording)
+    _experiment_recording = _start_experiment_video(args, _RUN_DIR)
+    if _experiment_recording is not None:
+        _video_recordings.append(_experiment_recording)
+
+    print("[LOOP] Loading VLM (Qwen3-VL-8B-Instruct)…")
+    from vlm.planner import VLMPlanner
+    from vlm.perception import PerceptionModule
+    from PIL import Image as PilImage
+
+    vlm       = VLMPlanner()
+    vlm.load()
+    perception = PerceptionModule()
+    perception.load()
+    print("[OK]   VLM + PerceptionModule loaded.\n")
+
+    # Capture overview camera at start of experiment
+    _capture_overview_image(args, _RUN_DIR, "start")
+
+    # Register shutdown handler to capture overview camera when program exits
+    def _shutdown_capture():
+        try:
+            _capture_overview_image(args, _RUN_DIR, "shutdown")
+        except Exception:
+            pass
+    atexit.register(_shutdown_capture)
+
+    completed_steps: list[str] = []
+    docker_cmd = _docker(args.container, args.sudo_docker)
+
+    # Replanning on failure state
+    _current_plan       = None   # cached full VLMPlan (remaining steps)
+    _last_failed_step   = None   # step that caused last replan
+    _replan_count       = 0      # how many times we've replanned
 
     # Overview camera calibration — computed once from world file (camera is static)
     _OV_K, _OV_CTB = _get_overview_cam_data(args.world, real_ros2=args.real_ros2)
@@ -626,7 +1014,9 @@ def main(real_ros2_default: bool = False) -> None:
 
     # Tracks destinations of placed objects; new DINO detections within
     # EXCL_RADIUS of a recorded position are skipped to prevent re-picking.
-    _placed_at: dict[str, tuple[float, float]] = {}
+    _placed_at: dict[
+        str, tuple[float, float] | tuple[float, float, float]
+    ] = {}
     _last_dino_est: dict[str, tuple[float, float]] = {}  # last DINO estimate per name
     _last_dino_pose: dict[str, dict] = {}  # full XYZ pose used by execution
     _EXCL_RADIUS = 0.10  # 10cm — objects within this radius are treated as identical
@@ -639,6 +1029,10 @@ def main(real_ros2_default: bool = False) -> None:
     _accumulated_da: dict = {}
 
     for iteration in range(args.max_steps):
+        _iteration_started_monotonic = time.monotonic()
+        _iteration_started_at = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat(timespec="milliseconds")
         print(f"\n{'─'*60}")
         print(f"  ITERAZIONE {iteration+1} / {args.max_steps}")
         print(f"  Completati: {completed_steps or ['(nessuno)']}")
@@ -650,6 +1044,14 @@ def main(real_ros2_default: bool = False) -> None:
         last_pick  = max((i for i,s in enumerate(completed_steps) if s.startswith("pick")),  default=-1)
         last_place = max((i for i,s in enumerate(completed_steps) if s.startswith("place") or s.startswith("stack")), default=-1)
         holding = last_pick > last_place
+        _held_object = next(
+            (
+                step[5:].split(",")[0].rstrip(")")
+                for step in reversed(completed_steps)
+                if step.startswith("pick(")
+            ),
+            None,
+        ) if holding else None
 
         # REMOVED Pre-scan
 
@@ -662,7 +1064,9 @@ def main(real_ros2_default: bool = False) -> None:
         #     print("[LOOP] Holding object — skip scan pose, capture from current arm position")
 
         # 2. Capture
+        _capture_started_monotonic = time.monotonic()
         image_path = _capture(args)
+        _capture_time_s = time.monotonic() - _capture_started_monotonic
         if image_path is None:
             print("[FAIL] No image — aborting loop")
             break
@@ -752,17 +1156,10 @@ def main(real_ros2_default: bool = False) -> None:
         # Wrist cam (image) continues to be used for DINO localization.
         _data_dir_annot = str(_REPO_ROOT / "data")
         if _using_overview and _OV_CTB is not None:
-            # Annotate on overview image using overview cam_to_base (fixed reference)
-            import json as _jjson
-            _ov_info = {"K": _OV_K.tolist()}
-            _ov_pose = {"cam_to_base": _OV_CTB.tolist()}
-            _tmp_info = _REPO_ROOT / "data" / "_tmp_ov_info.json"
-            _tmp_pose = _REPO_ROOT / "data" / "_tmp_ov_pose.json"
-            with open(str(_tmp_info), "w") as _f: _jjson.dump(_ov_info, _f)
-            with open(str(_tmp_pose), "w") as _f: _jjson.dump(_ov_pose, _f)
+            # Annotate on overview image using its fixed calibration directly.
             image_for_vlm = _annotate_handled_objects(
                 image_vlm, _placed_at, str(_REPO_ROOT / "data"),
-                info_file="_tmp_ov_info.json", pose_file="_tmp_ov_pose.json")
+                camera_matrix=_OV_K, cam_to_base=_OV_CTB)
         else:
             image_for_vlm = _annotate_handled_objects(image, _placed_at, _data_dir_annot)
 
@@ -1005,15 +1402,12 @@ def main(real_ros2_default: bool = False) -> None:
                 # The held object is inside the gripper and not visible in the overview.
                 # Identify it from the last pick(...) in completed_steps.
                 if holding:
-                    _held = next(
-                        (s[5:].split(",")[0].rstrip(")")
-                         for s in reversed(completed_steps)
-                         if s.startswith("pick(")),
-                        None,
-                    )
-                    if _held and _held in names_to_estimate:
-                        names_to_estimate.pop(_held)
-                        print(f"[LOOP] Holding '{_held}' — skip DINO (in gripper, not visible)")
+                    if _held_object and _held_object in names_to_estimate:
+                        names_to_estimate.pop(_held_object)
+                        print(
+                            f"[LOOP] Holding '{_held_object}' — skip DINO "
+                            "(in gripper, not visible)"
+                        )
 
                 _dino_detections = []
                 for name, name_key in names_to_estimate.items():
@@ -1087,6 +1481,11 @@ def main(real_ros2_default: bool = False) -> None:
                         name, det_img_all, det_K_all, det_ctb_all,
                         vlm_description=name.replace("_", " "),
                         depth_image=_depth_arr,
+                        excluded_positions=(
+                            list(_placed_at.values())
+                            if name_key in ("object", "target") else None
+                        ),
+                        exclusion_radius=_EXCL_RADIUS,
                     )
                     if perception._last_detection:
                         _dino_detections.append(perception._last_detection.copy())
@@ -1174,11 +1573,22 @@ def main(real_ros2_default: bool = False) -> None:
                     else:
                         print(f"[LOOP] DINO [{src_label_all}]: '{name}' non rilevato — oracle fallback")
 
-                # Save DINO bounding-box overlay for this iteration
-                if _dino_detections and det_img_all is not None:
+                # Publish handled-object crosses too. Previously this overlay was
+                # rebuilt from the raw frame, so RViz never showed the marks that
+                # were present in the private VLM input image.
+                if det_img_all is not None and (_dino_detections or _placed_at):
                     try:
                         from vlm.perception import PerceptionModule as _PM
-                        _ann = _PM.draw_detections(det_img_all, _dino_detections)
+                        if src_label_all == "overview":
+                            _ann_base = _annotate_handled_objects(
+                                det_img_all, _placed_at, _data_dir,
+                                camera_matrix=_OV_K, cam_to_base=_OV_CTB,
+                            )
+                        else:
+                            _ann_base = _annotate_handled_objects(
+                                det_img_all, _placed_at, _data_dir,
+                            )
+                        _ann = _PM.draw_detections(_ann_base, _dino_detections)
                         _dino_path = _RUN_DIR / f"iter_{iteration+1:02d}_dino.png"
                         _ann.save(str(_dino_path))
                         print(f"[LOOP] DINO annotation saved: {_dino_path.name}")
@@ -1216,9 +1626,14 @@ def main(real_ros2_default: bool = False) -> None:
 
         # Save per-iteration debug package to run directory
         _iter_n = iteration + 1
+        _state_before_step = _capture_robot_state(args)
+        _debug_monotonic = time.monotonic()
+        _debug_timestamp = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat(timespec="milliseconds")
+        _iter_dir = _RUN_DIR / f"iter_{_iter_n:02d}"
         try:
             import json as _dbg_json
-            from pathlib import Path as _PPath
 
             # 1. VLM plan JSON (raw + grounded)
             # Full remaining plan (all steps, before extracting current step)
@@ -1235,9 +1650,30 @@ def main(real_ros2_default: bool = False) -> None:
 
             # 3. Comprehensive debug JSON
             _debug = {
+                "debug_schema_version": 2,
+                "run_id": _RUN_DIR.name,
                 "iteration":       _iter_n,
                 "task":            args.task,
-                "world":           getattr(args, "world", "unknown"),
+                "world":           _world_tag,
+                "environment": {
+                    "mode": "real_robot" if args.real_ros2 else "simulation",
+                    "gazebo_world": None if args.real_ros2 else args.world,
+                    "robot": "fr3" if args.real_ros2 else "panda",
+                    "execute": bool(args.execute),
+                },
+                "timestamp": _debug_timestamp,
+                "loop_started_at": _loop_started_at,
+                "iteration_started_at": _iteration_started_at,
+                "timing": {
+                    "loop_elapsed_s": round(
+                        _debug_monotonic - _loop_started_monotonic, 3
+                    ),
+                    "iteration_elapsed_s": round(
+                        _debug_monotonic - _iteration_started_monotonic, 3
+                    ),
+                    "capture_s": round(_capture_time_s, 3),
+                    "vlm_s": round(vlm_time, 3),
+                },
                 "completed_steps": completed_steps,
                 "vlm_time_s":      round(vlm_time, 2),
                 "full_remaining_plan": _full_plan_dict,   # all remaining steps
@@ -1252,8 +1688,44 @@ def main(real_ros2_default: bool = False) -> None:
                 "detected_object_poses": dict(_last_dino_pose),
                 "placed_at":       {k: list(v) for k, v in _placed_at.items()},
                 "using_overview_cam": _using_overview,
+                "robot_state_before_step": _state_before_step,
+                "loop_state_before_step": {
+                    "holding_object": holding,
+                    "held_object_name": _held_object,
+                    "completed_step_count": len(completed_steps),
+                    "replan_count": _replan_count,
+                    "using_cached_plan": _use_cached_plan,
+                    "remaining_plan_step_count": len(
+                        _current_plan.steps if _current_plan else []
+                    ),
+                    "last_dispatch_seq": _last_seq,
+                },
+                "camera_state": {
+                    "primary_perception_camera": (
+                        "overview" if _using_overview else "wrist"
+                    ),
+                    "overview_available": bool(_using_overview),
+                    "wrist_snapshot": str(image_path),
+                    "overview_snapshot": str(_ov_path) if _ov_path.exists() else None,
+                    "overview_image_topic": args.overview_image_topic,
+                    "wrist_image_topic": args.wrist_image_topic,
+                    "overview_recording_enabled": bool(
+                        args.record_overview_video
+                    ),
+                    "overview_video_topic": args.overview_video_topic,
+                    "overview_video_fps": args.overview_video_fps,
+                    "overview_video_file": "overview_camera.mp4",
+                },
+                "scene_state": {
+                    "known_models": gazebo_models,
+                    "detected_object_count": len(_last_dino_pose),
+                    "placed_object_count": len(_placed_at),
+                },
+                "execution": {
+                    "attempted": False,
+                    "result": None,
+                },
             }
-            _iter_dir = _RUN_DIR / f"iter_{_iter_n:02d}"
             _iter_dir.mkdir(exist_ok=True)
 
             (_iter_dir / "debug.json").write_text(
@@ -1308,6 +1780,13 @@ def main(real_ros2_default: bool = False) -> None:
                 answer = ""
             if answer not in {"y", "yes"}:
                 print("[LOOP] Action cancelled by operator; plan was not injected.")
+                _update_iteration_debug(_iter_dir, {
+                    "execution": {
+                        "attempted": False,
+                        "cancelled_by_operator": True,
+                        "result": None,
+                    }
+                })
                 break
 
         # 6. Serialize + inject.
@@ -1319,6 +1798,10 @@ def main(real_ros2_default: bool = False) -> None:
         #   - pour/tilt steps without prior pick → arm is already holding the source
         # This makes single-step validation correct for all mid-task states.
         request_id = str(uuid.uuid4())
+        _dispatch_started_monotonic = time.monotonic()
+        _dispatch_started_at = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat(timespec="milliseconds")
         payload = json.dumps({
             "request_id": request_id,
             "command":  args.task,
@@ -1335,7 +1818,21 @@ def main(real_ros2_default: bool = False) -> None:
             capture_output=True,
         )
         if inject_result.returncode != 0:
-            print(f"[FAIL] Injection failed: {inject_result.stderr.decode().strip()}")
+            _inject_error = inject_result.stderr.decode().strip()
+            print(f"[FAIL] Injection failed: {_inject_error}")
+            _update_iteration_debug(_iter_dir, {
+                "execution": {
+                    "attempted": True,
+                    "request_id": request_id,
+                    "dispatch_started_at": _dispatch_started_at,
+                    "dispatch_loop_elapsed_s": round(
+                        _dispatch_started_monotonic - _loop_started_monotonic, 3
+                    ),
+                    "injected": False,
+                    "error": _inject_error,
+                    "result": None,
+                }
+            })
             break
         print(f"[OK]   Step injected.")
 
@@ -1345,6 +1842,31 @@ def main(real_ros2_default: bool = False) -> None:
             args, timeout=60, min_seq=_last_seq + 1,
             request_id=request_id,
         )
+        _step_completed_monotonic = time.monotonic()
+        _step_completed_at = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat(timespec="milliseconds")
+        _state_after_step = _capture_robot_state(args)
+        _update_iteration_debug(_iter_dir, {
+            "execution": {
+                "attempted": True,
+                "request_id": request_id,
+                "dispatch_started_at": _dispatch_started_at,
+                "completed_at": _step_completed_at,
+                "dispatch_loop_elapsed_s": round(
+                    _dispatch_started_monotonic - _loop_started_monotonic, 3
+                ),
+                "completion_loop_elapsed_s": round(
+                    _step_completed_monotonic - _loop_started_monotonic, 3
+                ),
+                "duration_s": round(
+                    _step_completed_monotonic - _dispatch_started_monotonic, 3
+                ),
+                "injected": True,
+                "result": result,
+                "robot_state_after_step": _state_after_step,
+            }
+        })
         if "seq" in result:
             _last_seq = result["seq"]
 
@@ -1371,16 +1893,69 @@ def main(real_ros2_default: bool = False) -> None:
 
             completed_steps.append(step_desc)
             print(f"[OK]   Step completato: {step_desc}")
+            _holding_after_step = (
+                True if s0_grnd.primitive == "pick"
+                else False if s0_grnd.primitive in ("place", "stack")
+                else holding
+            )
+            _held_after_step = (
+                obj_orig if s0_grnd.primitive == "pick"
+                else None if s0_grnd.primitive in ("place", "stack")
+                else _held_object
+            )
+            _update_iteration_debug(_iter_dir, {
+                "completed_steps": list(completed_steps),
+                "loop_state_after_step": {
+                    "holding_object": _holding_after_step,
+                    "held_object_name": _held_after_step,
+                    "completed_step_count": len(completed_steps),
+                    "replan_count": _replan_count,
+                    "last_dispatch_seq": _last_seq,
+                },
+            })
 
             # Track place destinations for annotation markers
             if s0_orig.primitive == "place":
                 obj_placed = s0_orig.args.get("object", "")
                 loc_placed = s0_grnd.args.get("location", "")
-                if obj_placed and loc_placed in _last_dino_est:
-                    px, py = _last_dino_est[loc_placed]
-                    _placed_at[obj_placed] = (px, py)
+                loc_original = s0_orig.args.get("location", "")
+                placed_position = _placed_object_position(
+                    loc_original, loc_placed, _last_dino_est,
+                    _last_dino_pose, raw_gazebo_poses,
+                )
+                if obj_placed and placed_position is not None:
+                    px, py = placed_position[:2]
+                    _placed_at[obj_placed] = placed_position
                     print(f"[LOOP] Annotation: '{obj_placed}' placed at "
                           f"({px:.2f},{py:.2f}) → ✓ marker added to future images")
+                    # Update the ROS/RViz image now as well. Otherwise a final
+                    # place exits before another iteration can publish the mark.
+                    try:
+                        if _using_overview and _OV_CTB is not None:
+                            placed_image = _annotate_handled_objects(
+                                image_vlm, _placed_at, _data_dir_annot,
+                                camera_matrix=_OV_K, cam_to_base=_OV_CTB,
+                            )
+                            placed_source = "overview"
+                        else:
+                            placed_image = _annotate_handled_objects(
+                                image, _placed_at, _data_dir_annot,
+                            )
+                            placed_source = "wrist"
+                        placed_path = (
+                            _RUN_DIR / f"iter_{iteration+1:02d}_placed.png"
+                        )
+                        placed_image.save(str(placed_path))
+                        _publish_dino_annotated_image(
+                            args, placed_path, placed_source,
+                        )
+                    except Exception as exc:
+                        print(f"[WARN] Post-place annotation failed: {exc}")
+                elif obj_placed:
+                    print(
+                        f"[WARN] Annotation: no pose for place destination "
+                        f"'{loc_placed or loc_original}'; cannot mark '{obj_placed}'"
+                    )
 
             if args.replan_on_failure_only:
                 # The first cached step is exactly the action just completed.
@@ -1413,10 +1988,21 @@ def main(real_ros2_default: bool = False) -> None:
         print(f"\n[WARN] Limite massimo di {args.max_steps} step raggiunto.")
 
     print(f"\n[LOOP] Steps completati: {completed_steps}")
+
+    # Capture overview camera at end of experiment
+    _capture_overview_image(args, _RUN_DIR, "end")
+
+    for _video_recording in _video_recordings:
+        _video_recording.stop()
+        atexit.unregister(_video_recording.stop)
     # Save completed steps to run directory
     with open(str(_RUN_DIR / "run_info.txt"), "a") as _rf:
         _rf.write(f"steps:     {completed_steps}\n")
         _rf.write(f"n_steps:   {len(completed_steps)}\n")
+        if (_RUN_DIR / "experiment_webcam.mp4").exists():
+            _rf.write("video:     experiment_webcam.mp4\n")
+        if (_RUN_DIR / "overview_camera.mp4").exists():
+            _rf.write("overview_video: overview_camera.mp4\n")
     print(f"[LOOP] Debug images saved in: {_RUN_DIR.relative_to(_REPO_ROOT)}")
 
     # Generate self-contained HTML report for this run
